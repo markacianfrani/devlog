@@ -1,0 +1,3 @@
+{"type":"user","sessionId":"test-session-ct","uuid":"msg-user-1","parentUuid":null,"timestamp":"2026-01-20T10:00:00.000Z","cwd":"/home/user/project","message":{"role":"user","content":"Hello"}}
+{"type":"assistant","sessionId":"test-session-ct","uuid":"msg-asst-1","parentUuid":"msg-user-1","timestamp":"2026-01-20T10:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi there!"}],"usage":{"input_tokens":10,"output_tokens":5}}}
+{"type":"custom-title","customTitle":"My custom session title","sessionId":"test-session-ct"}

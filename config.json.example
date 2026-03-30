@@ -1,0 +1,4 @@
+{
+  "archiveDir": "/Users/yourname/.config/devlog",
+  "excludeProjects": ["-Users-yourname-Code-project1", "-Users-yourname-Code-project2"]
+}

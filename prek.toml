@@ -1,0 +1,7 @@
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "check", name = "check", language = "system", entry = "bun run check", files = "\\.ts$", pass_filenames = false },
+  { id = "lint", name = "lint", language = "system", entry = "bun run lint", files = "\\.(ts|js)$", pass_filenames = false },
+  { id = "format", name = "format", language = "system", entry = "bun run format:check", files = "\\.(ts|js|json)$", pass_filenames = false },
+]

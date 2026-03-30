@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"pi-session-1","timestamp":"2026-03-15T20:09:38.000Z","cwd":"/home/user/project"}
+{"type":"model_change","id":"m0000001","parentId":null,"timestamp":"2026-03-15T20:09:38.000Z","provider":"openai-codex","modelId":"gpt-5.4"}
+{"type":"session_info","id":"s0000001","parentId":"m0000001","timestamp":"2026-03-15T20:09:39.000Z","name":"Refactor auth module"}
+{"type":"message","id":"u0000001","parentId":"s0000001","timestamp":"2026-03-15T20:10:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Review auth flow"}],"timestamp":1773605400000}}
+{"type":"message","id":"a0000001","parentId":"u0000001","timestamp":"2026-03-15T20:10:05.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"private reasoning"},{"type":"text","text":"I'll inspect the auth flow."},{"type":"toolCall","id":"call_1","name":"read","arguments":{"path":"/home/user/project/src/auth.ts"}}],"provider":"openai-codex","model":"gpt-5.4","usage":{"input":120,"output":45,"cacheRead":10,"cacheWrite":5},"stopReason":"toolUse","timestamp":1773605405000}}
+{"type":"message","id":"t0000001","parentId":"a0000001","timestamp":"2026-03-15T20:10:06.000Z","message":{"role":"toolResult","toolCallId":"call_1","toolName":"read","content":[{"type":"text","text":"export const auth = true;"}],"isError":false,"timestamp":1773605406000}}

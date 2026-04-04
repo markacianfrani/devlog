@@ -22,6 +22,8 @@ const SKIP_TYPES = new Set([
   "queue-operation",
   "last-prompt",
   "agent-name",
+  "permission-mode",
+  "attachment",
 ]);
 const KNOWN_TYPES = new Set([...SKIP_TYPES, "user", "assistant", "pr-link"]);
 

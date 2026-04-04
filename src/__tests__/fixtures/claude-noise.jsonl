@@ -3,6 +3,8 @@
 {"type":"file-history-snapshot","messageId":"msg-1","snapshot":{"trackedFileBackups":{}}}
 {"type":"system","message":"System message"}
 {"type":"queue-operation","operation":"add"}
+{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"test-session-4"}
+{"type":"attachment","parentUuid":"msg-user-2","isSidechain":false,"attachment":{"type":"deferred_tools_delta","addedNames":["WebSearch","WebFetch"],"addedLines":["WebSearch","WebFetch"],"removedNames":[]},"uuid":"attach-1","timestamp":"2026-01-20T10:00:01.500Z","userType":"external","entrypoint":"cli","cwd":"/home/user/project","sessionId":"test-session-4","version":"2.1.90","gitBranch":"main"}
 {"type":"pr-link","sessionId":"test-session-4","prNumber":109,"prUrl":"https://github.com/example-org/web-app/pull/109","prRepository":"example-org/web-app","timestamp":"2026-01-20T10:00:02.000Z"}
 {"type":"user","sessionId":"test-session-4","uuid":"msg-user-1","parentUuid":null,"timestamp":"2026-01-20T10:00:00.000Z","cwd":"/home/user/project","isMeta":true,"message":{"role":"user","content":"Meta message to skip"}}
 {"type":"user","sessionId":"test-session-4","uuid":"msg-user-2","parentUuid":null,"timestamp":"2026-01-20T10:00:01.000Z","cwd":"/home/user/project","message":{"role":"user","content":"Real user message"}}

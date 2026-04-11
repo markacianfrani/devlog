@@ -902,6 +902,24 @@ export { slugFromPath };
 
 async function main() {
   const args = process.argv.slice(2);
+
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log("Usage: devlog [archive|index|mcp|init] [options]");
+    console.log("");
+    console.log("Commands:");
+    console.log("  archive    Archive Claude Code, opencode, and pi sessions (default)");
+    console.log("  index      Index archived sessions into SQLite database");
+    console.log("  mcp        Start the MCP server (stdio)");
+    console.log("  init       Set up devlog and install MCP servers");
+    console.log("");
+    console.log("Options:");
+    console.log("  --rebuild  (index only) Re-index all sessions, ignoring cache");
+    console.log("  --verbose  Show per-project and per-session details");
+    console.log("  --debug    Include noisy debug logs");
+    console.log("  --help     Show this help message");
+    return;
+  }
+
   const command = args.find((arg) => !arg.startsWith("--")) ?? "archive";
   const options: CliOptions = {
     verbose: args.includes("--verbose"),

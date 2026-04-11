@@ -3,12 +3,13 @@
   "version": "1.1.0",
   "description": "Archive AI assistant conversations (Claude Code, opencode, pi)",
   "bin": {
-    "devlog": "./src/archive.ts"
+    "devlog": "./dist/cli.js"
   },
   "type": "module",
   "scripts": {
-    "start": "bun src/archive.ts",
     "build": "tsc --noEmit",
+    "build:cli": "bun build src/archive.ts --outfile dist/cli.js --target bun",
+    "prepublish": "bun run build:cli",
     "typecheck": "tsc --noEmit",
     "check": "bun run lint && bun test && bun run typecheck",
     "lint": "oxlint --tsconfig tsconfig.json .",

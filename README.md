@@ -6,8 +6,37 @@ Supports **Claude Code**, **Opencode**, and **pi**.
 
 ## Quick start
 
+### Install locally
+
 ```bash
 bun install
+devlog init
+```
+
+### Install globally
+
+If you want `devlog` available as a global command:
+
+```bash
+# Build the CLI first
+bun run build:cli
+
+# Link the package globally
+bun link -g devlog
+```
+
+Or if `bun link -g` fails (known Bun issue), manually create the symlink:
+
+```bash
+bun run build:cli
+bun link
+rm -f ~/.bun/bin/devlog
+ln -s "$(pwd)/dist/cli.js" ~/.bun/bin/devlog
+```
+
+After setup, run:
+
+```bash
 devlog init
 ```
 

@@ -1,6 +1,11 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  createIndexRedactionContext,
+  redactForIndexing,
+  type IndexRedactionContext,
+} from "./redaction.ts";
 import { parseClaudeSession } from "./parsers/claude.ts";
 import { parseOpenCodeSession } from "./parsers/opencode.ts";
 import { parsePiSession } from "./parsers/pi.ts";
@@ -206,6 +211,7 @@ export async function indexSession(
   source: "claude" | "opencode" | "pi",
   project: string,
   db: Database,
+  redactionContext?: IndexRedactionContext,
 ): Promise<{ indexed: boolean; messageCount: number }> {
   const mtime = getMtime(jsonlPath);
   const existing = checkSession(db, jsonlPath, mtime);
@@ -226,6 +232,8 @@ export async function indexSession(
   } else {
     result = await parsePiSession(jsonlPath, project);
   }
+
+  result = redactForIndexing(result, redactionContext);
 
   if (!result.meta.id || result.messages.length === 0) {
     return { indexed: false, messageCount: 0 };
@@ -310,6 +318,7 @@ export async function indexAll(
   const jsonlFiles = findJsonlFiles(projectsDir);
   callbacks?.onStart?.(jsonlFiles.length);
 
+  const redactionContext = createIndexRedactionContext();
   let processed = 0;
 
   for (const filePath of jsonlFiles) {
@@ -319,7 +328,7 @@ export async function indexAll(
     }
 
     try {
-      const result = await indexSession(filePath, info.source, info.project, db);
+      const result = await indexSession(filePath, info.source, info.project, db, redactionContext);
       if (result.indexed) {
         stats.sessionsIndexed++;
         stats.messagesIndexed += result.messageCount;

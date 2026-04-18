@@ -9,28 +9,6 @@ import type {
 
 const seenUnknownTypes = new Set<string>();
 
-const SECRET_PATTERNS: Array<[RegExp, string]> = [
-  [/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED:anthropic-key]"],
-  [/sk-[A-Za-z0-9]{48}/g, "[REDACTED:openai-key]"],
-  [/AKIA[0-9A-Z]{16}/g, "[REDACTED:aws-key]"],
-  [/-----BEGIN [\w ]+ KEY-----[\s\S]+?-----END [\w ]+ KEY-----/g, "[REDACTED:private-key]"],
-  [/\bBearer\s+[A-Za-z0-9+/=._-]{20,}/g, "Bearer [REDACTED]"],
-  [/\bBasic\s+[A-Za-z0-9+/=]{20,}/g, "Basic [REDACTED]"],
-  // env-var assignments whose names suggest a secret
-  [
-    /((?:API_?KEY|AUTH|TOKEN|SECRET|PASSWORD|CREDENTIAL)S?["']?\s*[=:]\s*["']?)([A-Za-z0-9+/._~-]{16,})(['";,\s]|$)/gi,
-    "$1[REDACTED]$3",
-  ],
-];
-
-export function scrubSecrets(text: string): string {
-  let result = text;
-  for (const [pattern, replacement] of SECRET_PATTERNS) {
-    result = result.replace(pattern, replacement);
-  }
-  return result;
-}
-
 export function warnUnknownType(type: string, context: string, parserName: string) {
   const key = `${context}:${type}`;
   if (!seenUnknownTypes.has(key)) {
@@ -49,8 +27,15 @@ export interface RawContentBlock {
   name?: string;
   input?: unknown;
   tool_use_id?: string;
-  content?: string;
+  content?: unknown;
   source?: { type?: string; media_type?: string; data?: string };
+}
+
+function stringifyJson(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return JSON.stringify(value);
 }
 
 export function parseContentBlock(
@@ -63,31 +48,30 @@ export function parseContentBlock(
   }
 
   if (block.type === "text" && block.text) {
-    return { type: "text", text: scrubSecrets(block.text) } satisfies TextContentBlock;
+    return { type: "text", text: block.text } satisfies TextContentBlock;
   }
 
   if (block.type === "tool_use") {
-    const raw = block.input ? JSON.stringify(block.input) : undefined;
     return {
       type: "tool_use",
       toolName: block.name,
-      toolInput: raw ? scrubSecrets(raw) : undefined,
+      toolInput: stringifyJson(block.input),
     } satisfies ToolUseContentBlock;
   }
 
   if (block.type === "tool_result") {
     const output = block.content;
-    const raw = typeof output === "string" ? output : JSON.stringify(output);
+    const raw = typeof output === "string" ? output : stringifyJson(output);
     return {
       type: "tool_result",
-      toolOutput: scrubSecrets(raw),
+      toolOutput: raw,
     } satisfies ToolResultContentBlock;
   }
 
   if (block.type === "thinking" && block.thinking) {
     return {
       type: "thinking",
-      thinking: scrubSecrets(block.thinking),
+      thinking: block.thinking,
     } satisfies ThinkingContentBlock;
   }
 

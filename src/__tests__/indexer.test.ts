@@ -102,6 +102,130 @@ describe("indexer", () => {
     expect(resultBlocks[0].tool_output).toContain("my-project");
   });
 
+  test("redacts content before writing to SQLite", async () => {
+    const previousSecret = process.env["DEVLOG_TEST_SECRET_TOKEN_INDEX"];
+    process.env["DEVLOG_TEST_SECRET_TOKEN_INDEX"] = "literal-secret-token-12345";
+
+    try {
+      const db = getDb(dbPath);
+      await indexSession(
+        path.join(FIXTURES_DIR, "claude-redaction.jsonl"),
+        "claude",
+        "test-project",
+        db,
+      );
+
+      const textBlocks = db
+        .query<{ text: string | null }, []>(
+          "SELECT text FROM content_blocks WHERE type = 'text' ORDER BY id",
+        )
+        .all()
+        .flatMap((row) => (row.text ? [row.text] : []));
+      const toolInputs = db
+        .query<{ tool_input: string | null }, []>(
+          "SELECT tool_input FROM content_blocks WHERE type = 'tool_use' ORDER BY id",
+        )
+        .all()
+        .flatMap((row) => (row.tool_input ? [row.tool_input] : []));
+      const toolOutputs = db
+        .query<{ tool_output: string | null }, []>(
+          "SELECT tool_output FROM content_blocks WHERE type = 'tool_result' ORDER BY id",
+        )
+        .all()
+        .flatMap((row) => (row.tool_output ? [row.tool_output] : []));
+
+      const persisted = [...textBlocks, ...toolInputs, ...toolOutputs].join("\n");
+
+      expect(persisted).toContain("[REDACTED:openai-project-key]");
+      expect(persisted).toContain("[REDACTED:devlog-test-secret-token-index]");
+      expect(persisted).toContain("[REDACTED:github-token]");
+      expect(persisted).toContain("[REDACTED:huggingface-token]");
+      expect(persisted).toContain("[REDACTED:jwt]");
+
+      expect(persisted).not.toContain("sk-proj-123456789012345678901234");
+      expect(persisted).not.toContain("literal-secret-token-12345");
+      expect(persisted).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
+      expect(persisted).not.toContain("hf_abcdefghijklmnopqrstuvwxyz12");
+    } finally {
+      if (previousSecret === undefined) {
+        delete process.env["DEVLOG_TEST_SECRET_TOKEN_INDEX"];
+      } else {
+        process.env["DEVLOG_TEST_SECRET_TOKEN_INDEX"] = previousSecret;
+      }
+    }
+  });
+
+  test("redacts OpenCode and Pi content before writing to SQLite", async () => {
+    const db = getDb(dbPath);
+    const cases: Array<{
+      fixture: string;
+      source: "opencode" | "pi";
+      expected: string[];
+      rawSecrets: string[];
+    }> = [
+      {
+        fixture: "opencode-redaction.jsonl",
+        source: "opencode",
+        expected: [
+          "[REDACTED:github-token]",
+          "Bearer [REDACTED]",
+          "[REDACTED:huggingface-token]",
+          "[REDACTED:jwt]",
+        ],
+        rawSecrets: [
+          "github_pat_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_abc",
+          "ghp_abcdefghijklmnopqrstuvwxyz123456",
+          "hf_abcdefghijklmnopqrstuvwxyz12",
+          "eyJabcdefghijk.eyJlmnopqrstuv.ABCDEFGHIJKLMNO",
+        ],
+      },
+      {
+        fixture: "pi-redaction.jsonl",
+        source: "pi",
+        expected: [
+          "[REDACTED:openrouter-key]",
+          "[REDACTED:github-token]",
+          "Bearer [REDACTED]",
+          "[REDACTED:huggingface-token]",
+          "[REDACTED:jwt]",
+        ],
+        rawSecrets: [
+          "sk-or-abcdefghijklmnopqrstuvwxyz123456",
+          "github_pat_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_abc",
+          "hf_abcdefghijklmnopqrstuvwxyz12",
+          "eyJabcdefghijk.eyJlmnopqrstuv.ABCDEFGHIJKLMNO",
+        ],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const filePath = path.join(FIXTURES_DIR, testCase.fixture);
+      await indexSession(filePath, testCase.source, "test-project", db);
+
+      const rows = db
+        .query<
+          { text: string | null; tool_input: string | null; tool_output: string | null },
+          [string]
+        >(
+          "SELECT text, tool_input, tool_output FROM content_blocks WHERE file_path = ? ORDER BY id",
+        )
+        .all(filePath);
+
+      const persisted = rows
+        .flatMap((row) => [row.text, row.tool_input, row.tool_output])
+        .flatMap((value) => (value ? [value] : []))
+        .join("\n");
+
+      for (const marker of testCase.expected) {
+        expect(persisted).toContain(marker);
+      }
+
+      for (const secret of testCase.rawSecrets) {
+        expect(persisted).not.toContain(secret);
+      }
+    }
+  });
+
   test("indexes OpenCode session", async () => {
     const db = getDb(dbPath);
     await indexSession(

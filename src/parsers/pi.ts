@@ -1,10 +1,5 @@
 import fs from "node:fs";
-import {
-  parseContentBlock,
-  scrubSecrets,
-  warnUnknownType,
-  type RawContentBlock,
-} from "./shared.ts";
+import { parseContentBlock, warnUnknownType, type RawContentBlock } from "./shared.ts";
 import type {
   AssistantMessage,
   CleanMessage,
@@ -90,7 +85,7 @@ function parsePiContent(
   }
 
   if (typeof content === "string") {
-    return [{ type: "text", text: scrubSecrets(content) }];
+    return [{ type: "text", text: content }];
   }
 
   const blocks: ContentBlock[] = [];
@@ -103,7 +98,7 @@ function parsePiContent(
       blocks.push({
         type: "tool_use",
         toolName: block.name,
-        toolInput: block.arguments ? scrubSecrets(JSON.stringify(block.arguments)) : undefined,
+        toolInput: block.arguments ? JSON.stringify(block.arguments) : undefined,
       } satisfies ToolUseContentBlock);
       continue;
     }
@@ -133,7 +128,7 @@ function buildPiToolResultContent(
   }
 
   if (typeof content === "string") {
-    return [{ type: "tool_result", toolOutput: scrubSecrets(content) }];
+    return [{ type: "tool_result", toolOutput: content }];
   }
 
   const textParts: string[] = [];
@@ -141,7 +136,7 @@ function buildPiToolResultContent(
 
   for (const block of content) {
     if (block.type === "text" && block.text) {
-      textParts.push(scrubSecrets(block.text));
+      textParts.push(block.text);
     } else if (block.type === "image") {
       images.push({ type: "image", mediaType: block.mimeType });
     } else if (block.type !== "thinking") {

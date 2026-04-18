@@ -3,6 +3,7 @@ import path from "node:path";
 import { parseClaudeSession } from "../parsers/claude.ts";
 import { parseOpenCodeSession } from "../parsers/opencode.ts";
 import { parsePiSession } from "../parsers/pi.ts";
+import { redactParseResult } from "../redaction.ts";
 import type {
   TextContentBlock,
   ThinkingContentBlock,
@@ -66,6 +67,46 @@ describe("Claude parser", () => {
     expect(toolResultMsg.content).toHaveLength(1);
     expect(toolResultMsg.content[0].type).toBe("tool_result");
     expect((toolResultMsg.content[0] as ToolResultContentBlock).toolOutput).toContain("my-project");
+  });
+
+  test("keeps parsing separate from redaction transform", async () => {
+    const previousSecret = process.env["DEVLOG_TEST_SECRET_TOKEN_PARSE"];
+    process.env["DEVLOG_TEST_SECRET_TOKEN_PARSE"] = "literal-secret-token-12345";
+
+    try {
+      const parsed = await parseClaudeSession(
+        path.join(FIXTURES_DIR, "claude-redaction.jsonl"),
+        "test-project",
+      );
+
+      const parsedUserText = (parsed.messages[0].content[0] as TextContentBlock).text;
+      expect(parsedUserText).toContain("sk-proj-123456789012345678901234");
+      expect(parsedUserText).toContain("literal-secret-token-12345");
+
+      const redacted = redactParseResult(parsed);
+
+      const firstUserText = (redacted.messages[0].content[0] as TextContentBlock).text;
+      expect(firstUserText).toContain("[REDACTED:openai-project-key]");
+      expect(firstUserText).toContain("[REDACTED:devlog-test-secret-token-parse]");
+      expect(firstUserText).not.toContain("sk-proj-123456789012345678901234");
+      expect(firstUserText).not.toContain("literal-secret-token-12345");
+
+      const toolUse = redacted.messages[1].content[0] as ToolUseContentBlock;
+      expect(toolUse.toolInput).toContain("Bearer [REDACTED]");
+      expect(toolUse.toolInput).toContain("[REDACTED:github-token]");
+      expect(toolUse.toolInput).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
+
+      const toolResult = redacted.messages[2].content[0] as ToolResultContentBlock;
+      expect(toolResult.toolOutput).toContain("[REDACTED:jwt]");
+      expect(toolResult.toolOutput).toContain("[REDACTED:huggingface-token]");
+      expect(toolResult.toolOutput).not.toContain("hf_abcdefghijklmnopqrstuvwxyz12");
+    } finally {
+      if (previousSecret === undefined) {
+        delete process.env["DEVLOG_TEST_SECRET_TOKEN_PARSE"];
+      } else {
+        process.env["DEVLOG_TEST_SECRET_TOKEN_PARSE"] = previousSecret;
+      }
+    }
   });
 
   test("extracts agentId for agent sessions", async () => {

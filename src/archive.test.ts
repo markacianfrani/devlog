@@ -11,6 +11,7 @@ import {
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const BIN_PATH = path.join(REPO_ROOT, "src", "archive.ts");
+const FIXTURES_DIR = path.join(import.meta.dir, "__tests__", "fixtures");
 const WORKSPACE_HASH = "5c9dbe89c9230dfefb77d96d9a7d13853999ce23";
 
 function slugFromPath(value: string) {
@@ -171,6 +172,82 @@ test("archives Claude conversations", () => {
     const archiveRoot = path.join(home, ".config", "devlog", "projects", slug);
     expect(fs.existsSync(path.join(archiveRoot, "claude", "session.jsonl"))).toBe(true);
   } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("index command redacts indexed content without modifying archived files", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "devlog-test-"));
+  const previousSecret = process.env["DEVLOG_TEST_SECRET_TOKEN_INTEGRATION"];
+  process.env["DEVLOG_TEST_SECRET_TOKEN_INTEGRATION"] = "literal-secret-token-12345";
+
+  try {
+    const worktree = path.join(home, "Code", "playground", "redaction-project");
+    ensureDir(worktree);
+
+    const slug = slugFromPath(worktree);
+    const sourcePath = path.join(home, ".claude", "projects", slug, "redaction-session.jsonl");
+    const fixtureContent = fs.readFileSync(
+      path.join(FIXTURES_DIR, "claude-redaction.jsonl"),
+      "utf-8",
+    );
+    ensureDir(path.dirname(sourcePath));
+    fs.writeFileSync(sourcePath, fixtureContent);
+
+    const archiveResult = runArchive(home);
+    expect(archiveResult.exitCode).toBe(0);
+
+    const archivedPath = path.join(
+      home,
+      ".config",
+      "devlog",
+      "projects",
+      slug,
+      "claude",
+      "redaction-session.jsonl",
+    );
+    expect(fs.readFileSync(archivedPath, "utf-8")).toBe(fixtureContent);
+    expect(fs.readFileSync(archivedPath, "utf-8")).toContain("sk-proj-123456789012345678901234");
+    expect(fs.readFileSync(archivedPath, "utf-8")).toContain("literal-secret-token-12345");
+
+    const indexResult = runArchive(home, ["index"]);
+    expect(indexResult.exitCode).toBe(0);
+
+    const dbPath = path.join(home, ".local", "state", "devlog", "index.db");
+    const db = new Database(dbPath, { readonly: true });
+
+    try {
+      const rows = db
+        .query<{ text: string | null; tool_input: string | null; tool_output: string | null }, []>(
+          "SELECT text, tool_input, tool_output FROM content_blocks ORDER BY id",
+        )
+        .all();
+
+      const persisted = rows
+        .flatMap((row) => [row.text, row.tool_input, row.tool_output])
+        .flatMap((value) => (value ? [value] : []))
+        .join("\n");
+
+      expect(persisted).toContain("[REDACTED:openai-project-key]");
+      expect(persisted).toContain("[REDACTED:devlog-test-secret-token-integration]");
+      expect(persisted).toContain("[REDACTED:github-token]");
+      expect(persisted).toContain("[REDACTED:huggingface-token]");
+      expect(persisted).toContain("[REDACTED:jwt]");
+
+      expect(persisted).not.toContain("sk-proj-123456789012345678901234");
+      expect(persisted).not.toContain("literal-secret-token-12345");
+      expect(persisted).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
+      expect(persisted).not.toContain("hf_abcdefghijklmnopqrstuvwxyz12");
+    } finally {
+      db.close();
+    }
+  } finally {
+    if (previousSecret === undefined) {
+      delete process.env["DEVLOG_TEST_SECRET_TOKEN_INTEGRATION"];
+    } else {
+      process.env["DEVLOG_TEST_SECRET_TOKEN_INTEGRATION"] = previousSecret;
+    }
+
     fs.rmSync(home, { recursive: true, force: true });
   }
 });

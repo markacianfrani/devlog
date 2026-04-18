@@ -56,7 +56,9 @@ SELECT project, COUNT(*) as n FROM sessions GROUP BY project ORDER BY n DESC
 
 **Archive** reads each agent's local session data and writes it to `~/devlog/` as normalized JSONL. Claude Code and pi store sessions as files, so devlog copies those directly. Opencode stores sessions in a SQLite database now, so devlog extracts and converts them.
 
-**Index** parses the archived JSONL into a SQLite database with full-text search (FTS5, porter stemming). The MCP server reads from that database.
+**Index** parses the archived JSONL into a SQLite database with full-text search (FTS5, porter stemming). Before content is written to SQLite, devlog does a best-effort scrub of common credential patterns plus exact matches for sensitive environment variable values such as `OPENAI_API_KEY` and `GITHUB_TOKEN`. The MCP server reads from that database.
+
+This scrubber is intentionally narrow: it helps avoid casually surfacing secrets in search results, but it is **not** a full PII/privacy sanitizer. Raw archived session files are copied unchanged.
 
 ### Session sources
 

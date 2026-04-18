@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { ParseResult, TextContentBlock, ToolUseContentBlock } from "../parsers/types.ts";
+import type {
+  ParseResult,
+  TextContentBlock,
+  ThinkingContentBlock,
+  ToolUseContentBlock,
+} from "../parsers/types.ts";
 import { redactParseResult } from "../redaction.ts";
 
 function withEnv<T>(name: string, value: string | undefined, run: () => T): T {
@@ -38,6 +43,7 @@ function makeParseResult(text: string): ParseResult {
         role: "assistant",
         content: [
           { type: "text", text },
+          { type: "thinking", thinking: `considering ${text}` },
           { type: "tool_use", toolName: "fetch", toolInput: JSON.stringify({ token: text }) },
         ],
       },
@@ -68,7 +74,8 @@ describe("redaction", () => {
       expect(redacted.meta.id).toBe("session-12345");
       expect(redacted.messages[0].sessionId).toBe("session-12345");
       expect(redacted.prLinks[0].sessionId).toBe("session-12345");
-      expect(redacted.prLinks[0].prUrl).toContain("session-12345");
+      expect(redacted.prLinks[0].prUrl).toContain("[REDACTED:devlog-test-secret-token-scope]");
+      expect(redacted.prLinks[0].prUrl).not.toContain("session-12345");
 
       expect(redacted.meta.title).toBe("[REDACTED:devlog-test-secret-token-scope]");
       expect(redactedText).toBe("[REDACTED:devlog-test-secret-token-scope]");
@@ -92,12 +99,21 @@ describe("redaction", () => {
     const original = makeParseResult(githubPat);
 
     const redacted = redactParseResult(original);
-    const toolUse = redacted.messages[0].content[1] as ToolUseContentBlock;
+    const toolUse = redacted.messages[0].content[2] as ToolUseContentBlock;
 
     expect(toolUse.toolInput).toContain("[REDACTED:github-token]");
     expect(toolUse.toolInput).not.toContain(githubPat);
 
     const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
     expect(redactedText).toBe("[REDACTED:github-token]");
+  });
+
+  test("redacts secrets inside thinking blocks", () => {
+    const original = makeParseResult("hf_abcdefghijklmnopqrstuvwxyz12");
+    const redacted = redactParseResult(original);
+    const thinking = redacted.messages[0].content[1] as ThinkingContentBlock;
+
+    expect(thinking.thinking).toBe("considering [REDACTED:huggingface-token]");
+    expect(thinking.thinking).not.toContain("hf_abcdefghijklmnopqrstuvwxyz12");
   });
 });

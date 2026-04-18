@@ -4,8 +4,33 @@ import os from "node:os";
 import path from "node:path";
 import { closeDb, getDb } from "../db.ts";
 import { indexAll, indexSession } from "../indexer.ts";
+import type { IndexRedactionContext } from "../redaction.ts";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures");
+
+async function withEnv<T>(
+  name: string,
+  value: string | undefined,
+  run: () => T | Promise<T>,
+): Promise<T> {
+  const previous = process.env[name];
+
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = previous;
+    }
+  }
+}
 
 describe("indexer", () => {
   let tempDir: string;
@@ -103,10 +128,7 @@ describe("indexer", () => {
   });
 
   test("redacts content before writing to SQLite", async () => {
-    const previousSecret = process.env["DEVLOG_TEST_SECRET_TOKEN_INDEX"];
-    process.env["DEVLOG_TEST_SECRET_TOKEN_INDEX"] = "literal-secret-token-12345";
-
-    try {
+    await withEnv("DEVLOG_TEST_SECRET_TOKEN_INDEX", "literal-secret-token-12345", async () => {
       const db = getDb(dbPath);
       await indexSession(
         path.join(FIXTURES_DIR, "claude-redaction.jsonl"),
@@ -133,8 +155,12 @@ describe("indexer", () => {
         )
         .all()
         .flatMap((row) => (row.tool_output ? [row.tool_output] : []));
+      const prUrls = db
+        .query<{ pr_url: string }, []>("SELECT pr_url FROM pr_links ORDER BY rowid")
+        .all()
+        .map((row) => row.pr_url);
 
-      const persisted = [...textBlocks, ...toolInputs, ...toolOutputs].join("\n");
+      const persisted = [...textBlocks, ...toolInputs, ...toolOutputs, ...prUrls].join("\n");
 
       expect(persisted).toContain("[REDACTED:openai-project-key]");
       expect(persisted).toContain("[REDACTED:devlog-test-secret-token-index]");
@@ -146,13 +172,7 @@ describe("indexer", () => {
       expect(persisted).not.toContain("literal-secret-token-12345");
       expect(persisted).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
       expect(persisted).not.toContain("hf_abcdefghijklmnopqrstuvwxyz12");
-    } finally {
-      if (previousSecret === undefined) {
-        delete process.env["DEVLOG_TEST_SECRET_TOKEN_INDEX"];
-      } else {
-        process.env["DEVLOG_TEST_SECRET_TOKEN_INDEX"] = previousSecret;
-      }
-    }
+    });
   });
 
   test("redacts OpenCode and Pi content before writing to SQLite", async () => {
@@ -303,6 +323,37 @@ describe("indexer", () => {
     // Should still have 2 messages (old ones deleted, new ones added)
     const count = db.query<{ count: number }, []>("SELECT COUNT(*) as count FROM messages").get();
     expect(count?.count).toBe(2);
+  });
+
+  test("keeps the previous indexed copy when redaction fails during re-index", async () => {
+    const db = getDb(dbPath);
+    const tempFile = path.join(tempDir, "session.jsonl");
+    fs.copyFileSync(path.join(FIXTURES_DIR, "claude-simple.jsonl"), tempFile);
+
+    await indexSession(tempFile, "claude", "test-project", db);
+
+    const futureTime = Date.now() / 1000 + 1000;
+    fs.utimesSync(tempFile, futureTime, futureTime);
+
+    const invalidContext = { literalSecrets: 1 } as unknown as IndexRedactionContext;
+
+    await expect(
+      indexSession(tempFile, "claude", "test-project", db, invalidContext),
+    ).rejects.toThrow();
+
+    const session = db
+      .query<{ session_id: string }, [string]>(
+        "SELECT session_id FROM sessions WHERE file_path = ?",
+      )
+      .get(tempFile);
+    const messageCount = db
+      .query<{ count: number }, [string]>(
+        "SELECT COUNT(*) as count FROM messages WHERE file_path = ?",
+      )
+      .get(tempFile);
+
+    expect(session?.session_id).toBe("test-session-1");
+    expect(messageCount?.count).toBe(2);
   });
 
   test("indexAll indexes entire archive directory", async () => {

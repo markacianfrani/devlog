@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import type {
   ContentBlock,
   ImageContentBlock,
@@ -6,8 +7,34 @@ import type {
   ToolResultContentBlock,
   ToolUseContentBlock,
 } from "./types.ts";
+import { CONTENT_BLOCK_TYPES } from "./types.ts";
 
 const seenUnknownTypes = new Set<string>();
+
+export function readJsonlLines(jsonlPath: string): string[] {
+  return fs.readFileSync(jsonlPath, "utf-8").trim().split("\n").filter(Boolean);
+}
+
+export function warnSkippedMalformedLines(
+  parserName: string,
+  malformedLines: number,
+  jsonlPath: string,
+) {
+  if (malformedLines > 0) {
+    console.warn(`[${parserName}] Skipped ${malformedLines} malformed line(s) in ${jsonlPath}`);
+  }
+}
+
+export function getFirstTextPreview(
+  contentBlocks: readonly ContentBlock[],
+  maxLength: number = 200,
+): string | undefined {
+  const firstText = contentBlocks.find((block) => block.type === "text");
+  if (!firstText || firstText.type !== "text") {
+    return undefined;
+  }
+  return firstText.text.slice(0, maxLength);
+}
 
 export function warnUnknownType(type: string, context: string, parserName: string) {
   const key = `${context}:${type}`;
@@ -17,7 +44,7 @@ export function warnUnknownType(type: string, context: string, parserName: strin
   }
 }
 
-const KNOWN_CONTENT_TYPES = new Set(["text", "tool_use", "tool_result", "thinking", "image"]);
+const KNOWN_CONTENT_TYPES = new Set<string>(CONTENT_BLOCK_TYPES);
 
 export interface RawContentBlock {
   type: string;
@@ -29,6 +56,10 @@ export interface RawContentBlock {
   tool_use_id?: string;
   content?: unknown;
   source?: { type?: string; media_type?: string; data?: string };
+}
+
+export function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringifyJson(value: unknown): string | undefined {
@@ -52,6 +83,11 @@ export function parseContentBlock(
   }
 
   if (block.type === "tool_use") {
+    if (!block.name) {
+      console.warn(`[${parserName}] tool_use block missing name`);
+      return undefined;
+    }
+
     return {
       type: "tool_use",
       toolName: block.name,
@@ -62,6 +98,12 @@ export function parseContentBlock(
   if (block.type === "tool_result") {
     const output = block.content;
     const raw = typeof output === "string" ? output : stringifyJson(output);
+
+    if (raw === undefined) {
+      console.warn(`[${parserName}] tool_result block missing content`);
+      return undefined;
+    }
+
     return {
       type: "tool_result",
       toolOutput: raw,

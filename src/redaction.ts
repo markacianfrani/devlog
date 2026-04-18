@@ -1,4 +1,13 @@
-import type { CleanMessage, ContentBlock, ParseResult, SessionMeta } from "./parsers/types.ts";
+import type {
+  AssistantMessage,
+  CleanMessage,
+  ContentBlock,
+  ParseResult,
+  PrLink,
+  SessionMeta,
+  UserContentBlock,
+  UserMessage,
+} from "./parsers/types.ts";
 
 interface SecretPattern {
   regex: RegExp;
@@ -6,15 +15,24 @@ interface SecretPattern {
 }
 
 export interface LiteralSecret {
-  value: string;
-  replacement: string;
+  readonly value: string;
+  readonly replacement: string;
+}
+
+export interface NormalizedLiteralSecrets {
+  readonly kind: "normalized-literal-secrets";
+  readonly items: readonly LiteralSecret[];
 }
 
 export interface IndexRedactionContext {
-  literalSecrets?: LiteralSecret[];
+  readonly literalSecrets: NormalizedLiteralSecrets;
 }
 
-export interface RedactionContext extends IndexRedactionContext {}
+export type RedactionContext = IndexRedactionContext;
+
+export interface RedactedParseResult extends ParseResult {
+  readonly redacted: true;
+}
 
 type Environment = Record<string, string | undefined>;
 
@@ -70,8 +88,25 @@ function normalizeSecretLabel(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-export function collectLiteralSecrets(env: Environment = process.env): LiteralSecret[] {
+function normalizeLiteralSecrets(secrets: Iterable<LiteralSecret>): NormalizedLiteralSecrets {
   const byValue = new Map<string, string>();
+
+  for (const secret of secrets) {
+    if (!byValue.has(secret.value)) {
+      byValue.set(secret.value, secret.replacement);
+    }
+  }
+
+  return {
+    kind: "normalized-literal-secrets",
+    items: [...byValue.entries()]
+      .map(([value, replacement]) => ({ value, replacement }))
+      .sort((a, b) => b.value.length - a.value.length),
+  };
+}
+
+export function collectLiteralSecrets(env: Environment = process.env): NormalizedLiteralSecrets {
+  const secrets: LiteralSecret[] = [];
 
   for (const [name, value] of Object.entries(env)) {
     if (!value || !looksSensitiveEnvName(name)) {
@@ -82,20 +117,19 @@ export function collectLiteralSecrets(env: Environment = process.env): LiteralSe
       continue;
     }
 
-    if (!byValue.has(value)) {
-      byValue.set(value, `[REDACTED:${normalizeSecretLabel(name)}]`);
-    }
+    secrets.push({
+      value,
+      replacement: `[REDACTED:${normalizeSecretLabel(name)}]`,
+    });
   }
 
-  return [...byValue.entries()]
-    .map(([value, replacement]) => ({ value, replacement }))
-    .sort((a, b) => b.value.length - a.value.length);
+  return normalizeLiteralSecrets(secrets);
 }
 
-function redactText(text: string, literalSecrets: LiteralSecret[]): string {
+function redactText(text: string, literalSecrets: NormalizedLiteralSecrets): string {
   let result = text;
 
-  for (const secret of literalSecrets) {
+  for (const secret of literalSecrets.items) {
     if (result.includes(secret.value)) {
       result = result.replaceAll(secret.value, secret.replacement);
     }
@@ -108,55 +142,71 @@ function redactText(text: string, literalSecrets: LiteralSecret[]): string {
   return result;
 }
 
-function redactMeta(meta: SessionMeta, literalSecrets: LiteralSecret[]): SessionMeta {
+function redactMeta(meta: SessionMeta, literalSecrets: NormalizedLiteralSecrets): SessionMeta {
   if (!meta.title) {
     return meta;
   }
 
   const redactedTitle = redactText(meta.title, literalSecrets);
-  if (redactedTitle === meta.title) {
-    return meta;
-  }
-
-  return { ...meta, title: redactedTitle };
+  return redactedTitle === meta.title ? meta : { ...meta, title: redactedTitle };
 }
 
-function redactContentBlock<T extends ContentBlock>(block: T, literalSecrets: LiteralSecret[]): T {
+function redactContentBlock(
+  block: ContentBlock,
+  literalSecrets: NormalizedLiteralSecrets,
+): ContentBlock {
   switch (block.type) {
     case "text": {
       const redactedText = redactText(block.text, literalSecrets);
-      return redactedText === block.text ? block : ({ ...block, text: redactedText } as T);
+      return redactedText === block.text ? block : { ...block, text: redactedText };
     }
     case "thinking": {
       const redactedThinking = redactText(block.thinking, literalSecrets);
-      return redactedThinking === block.thinking
-        ? block
-        : ({ ...block, thinking: redactedThinking } as T);
+      return redactedThinking === block.thinking ? block : { ...block, thinking: redactedThinking };
     }
     case "tool_use": {
       if (!block.toolInput) {
         return block;
       }
       const redactedInput = redactText(block.toolInput, literalSecrets);
-      return redactedInput === block.toolInput
-        ? block
-        : ({ ...block, toolInput: redactedInput } as T);
+      return redactedInput === block.toolInput ? block : { ...block, toolInput: redactedInput };
     }
     case "tool_result": {
-      if (!block.toolOutput) {
-        return block;
-      }
       const redactedOutput = redactText(block.toolOutput, literalSecrets);
-      return redactedOutput === block.toolOutput
-        ? block
-        : ({ ...block, toolOutput: redactedOutput } as T);
+      return redactedOutput === block.toolOutput ? block : { ...block, toolOutput: redactedOutput };
     }
     case "image":
       return block;
   }
 }
 
-function redactMessage(message: CleanMessage, literalSecrets: LiteralSecret[]): CleanMessage {
+function redactUserContentBlock(
+  block: UserContentBlock,
+  literalSecrets: NormalizedLiteralSecrets,
+): UserContentBlock {
+  switch (block.type) {
+    case "text": {
+      const redactedText = redactText(block.text, literalSecrets);
+      return redactedText === block.text ? block : { ...block, text: redactedText };
+    }
+    case "tool_result": {
+      const redactedOutput = redactText(block.toolOutput, literalSecrets);
+      return redactedOutput === block.toolOutput ? block : { ...block, toolOutput: redactedOutput };
+    }
+    case "image":
+      return block;
+  }
+}
+
+function redactMessage(message: UserMessage, literalSecrets: NormalizedLiteralSecrets): UserMessage;
+function redactMessage(
+  message: AssistantMessage,
+  literalSecrets: NormalizedLiteralSecrets,
+): AssistantMessage;
+function redactMessage(
+  message: CleanMessage,
+  literalSecrets: NormalizedLiteralSecrets,
+): CleanMessage {
   if (message.role === "assistant") {
     return {
       ...message,
@@ -166,7 +216,22 @@ function redactMessage(message: CleanMessage, literalSecrets: LiteralSecret[]): 
 
   return {
     ...message,
-    content: message.content.map((block) => redactContentBlock(block, literalSecrets)),
+    content: message.content.map((block) => redactUserContentBlock(block, literalSecrets)),
+  };
+}
+
+function redactPrLink(link: PrLink, literalSecrets: NormalizedLiteralSecrets): PrLink {
+  const prUrl = redactText(link.prUrl, literalSecrets);
+  const prRepository = redactText(link.prRepository, literalSecrets);
+
+  if (prUrl === link.prUrl && prRepository === link.prRepository) {
+    return link;
+  }
+
+  return {
+    ...link,
+    prUrl,
+    prRepository,
   };
 }
 
@@ -178,21 +243,22 @@ export function createIndexRedactionContext(env: Environment = process.env): Ind
 
 export function redactForIndexing(
   result: ParseResult,
-  context: IndexRedactionContext = {},
-): ParseResult {
-  const literalSecrets = context.literalSecrets ?? collectLiteralSecrets();
+  context?: IndexRedactionContext,
+): RedactedParseResult {
+  const literalSecrets = context?.literalSecrets ?? collectLiteralSecrets();
 
   return {
     ...result,
     meta: redactMeta(result.meta, literalSecrets),
-    messages: result.messages.map((message) => redactMessage(message, literalSecrets)),
-    prLinks: result.prLinks,
+    messages: result.messages.map((message) => {
+      if (message.role === "assistant") {
+        return redactMessage(message, literalSecrets);
+      }
+      return redactMessage(message, literalSecrets);
+    }),
+    prLinks: result.prLinks.map((link) => redactPrLink(link, literalSecrets)),
+    redacted: true,
   };
 }
 
-export function redactParseResult(
-  result: ParseResult,
-  context: RedactionContext = {},
-): ParseResult {
-  return redactForIndexing(result, context);
-}
+export const redactParseResult = redactForIndexing;

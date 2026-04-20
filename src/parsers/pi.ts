@@ -1,21 +1,21 @@
-import fs from "node:fs";
 import {
+  getFirstTextPreview,
+  isObjectRecord,
   parseContentBlock,
-  scrubSecrets,
+  readJsonlLines,
+  warnSkippedMalformedLines,
   warnUnknownType,
   type RawContentBlock,
 } from "./shared.ts";
-import type {
-  AssistantMessage,
-  CleanMessage,
-  ContentBlock,
-  ImageContentBlock,
-  ParseResult,
-  SessionMeta,
-  TextContentBlock,
-  ToolResultContentBlock,
-  ToolUseContentBlock,
-  UserMessage,
+import {
+  createAssistantMessage,
+  createUserMessage,
+  finalizeParseResult,
+  type CleanMessage,
+  type ContentBlock,
+  type ImageContentBlock,
+  type ParseResult,
+  type UserContentBlock,
 } from "./types.ts";
 
 interface PiSessionHeader {
@@ -81,6 +81,31 @@ interface SessionState {
   parentSessionId?: string;
 }
 
+function isPiGenericEntry(value: unknown): value is PiGenericEntry {
+  return isObjectRecord(value);
+}
+
+function parsePiJsonLine(line: string): PiGenericEntry | undefined {
+  try {
+    const value = JSON.parse(line) as unknown;
+    return isPiGenericEntry(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPiSessionHeader(entry: PiGenericEntry): entry is PiSessionHeader {
+  return entry.type === "session";
+}
+
+function isPiMessageEntry(entry: PiGenericEntry): entry is PiMessageEntry {
+  return entry.type === "message";
+}
+
+function isPiMessageRole(role: string | undefined): role is "user" | "assistant" | "toolResult" {
+  return role === "user" || role === "assistant" || role === "toolResult";
+}
+
 function parsePiContent(
   content: string | PiRawContentBlock[] | undefined,
   parserName: string,
@@ -90,7 +115,7 @@ function parsePiContent(
   }
 
   if (typeof content === "string") {
-    return [{ type: "text", text: scrubSecrets(content) }];
+    return [{ type: "text", text: content }];
   }
 
   const blocks: ContentBlock[] = [];
@@ -100,11 +125,16 @@ function parsePiContent(
     }
 
     if (block.type === "toolCall") {
+      if (!block.name) {
+        console.warn(`[${parserName}] toolCall block missing name`);
+        continue;
+      }
+
       blocks.push({
         type: "tool_use",
         toolName: block.name,
-        toolInput: block.arguments ? scrubSecrets(JSON.stringify(block.arguments)) : undefined,
-      } satisfies ToolUseContentBlock);
+        toolInput: block.arguments ? JSON.stringify(block.arguments) : undefined,
+      });
       continue;
     }
 
@@ -112,7 +142,7 @@ function parsePiContent(
       blocks.push({
         type: "image",
         mediaType: block.mimeType,
-      } satisfies ImageContentBlock);
+      });
       continue;
     }
 
@@ -127,13 +157,13 @@ function parsePiContent(
 
 function buildPiToolResultContent(
   content: string | PiRawContentBlock[] | undefined,
-): ContentBlock[] {
+): UserContentBlock[] {
   if (!content) {
     return [];
   }
 
   if (typeof content === "string") {
-    return [{ type: "tool_result", toolOutput: scrubSecrets(content) }];
+    return [{ type: "tool_result", toolOutput: content }];
   }
 
   const textParts: string[] = [];
@@ -141,7 +171,7 @@ function buildPiToolResultContent(
 
   for (const block of content) {
     if (block.type === "text" && block.text) {
-      textParts.push(scrubSecrets(block.text));
+      textParts.push(block.text);
     } else if (block.type === "image") {
       images.push({ type: "image", mediaType: block.mimeType });
     } else if (block.type !== "thinking") {
@@ -149,7 +179,7 @@ function buildPiToolResultContent(
     }
   }
 
-  const blocks: ContentBlock[] = [];
+  const blocks: UserContentBlock[] = [];
   if (textParts.length > 0) {
     blocks.push({ type: "tool_result", toolOutput: textParts.join("\n") });
   }
@@ -199,16 +229,13 @@ function updateStateFromEntry(
     state.model = entry.message.model;
   }
   if (!state.title && entry.message?.role === "user") {
-    const firstText = contentBlocks.find((block) => block.type === "text");
-    if (firstText && firstText.type === "text") {
-      state.title = firstText.text.slice(0, 200);
-    }
+    state.title = getFirstTextPreview(contentBlocks) ?? state.title;
   }
 }
 
 function buildPiMessage(
   entry: PiMessageEntry,
-  sessionId: string,
+  sessionId: string | undefined,
   content: ContentBlock[],
 ): CleanMessage | undefined {
   const role = entry.message?.role;
@@ -216,58 +243,40 @@ function buildPiMessage(
     return undefined;
   }
 
-  const baseMessage = {
-    id: entry.id ?? "",
+  const messageDraft = {
+    id: entry.id,
     sessionId,
-    timestamp: entry.timestamp ?? "",
+    timestamp: entry.timestamp,
     ...(entry.parentId && { parentId: entry.parentId }),
     ...(entry.message?.model && { model: entry.message.model }),
     ...extractTokenFields(entry.message),
   };
 
   if (role === "user") {
-    return {
-      ...baseMessage,
-      role: "user",
-      content: content.filter(
-        (block): block is TextContentBlock | ToolResultContentBlock | ImageContentBlock =>
+    return createUserMessage(
+      messageDraft,
+      content.filter(
+        (block): block is UserContentBlock =>
           block.type === "text" || block.type === "tool_result" || block.type === "image",
       ),
-    } satisfies UserMessage;
+    );
   }
 
   if (role === "assistant") {
-    return {
-      ...baseMessage,
-      role: "assistant",
-      content,
-    } satisfies AssistantMessage;
+    return createAssistantMessage(messageDraft, content);
   }
 
   if (role === "toolResult") {
-    return {
-      ...baseMessage,
-      role: "user",
-      content: content.filter(
-        (block): block is ToolResultContentBlock | ImageContentBlock =>
+    return createUserMessage(
+      messageDraft,
+      content.filter(
+        (block): block is UserContentBlock =>
           block.type === "tool_result" || block.type === "image",
       ),
-    } satisfies UserMessage;
+    );
   }
 
   return undefined;
-}
-
-function parsePiJsonLine(line: string): PiGenericEntry | undefined {
-  try {
-    return JSON.parse(line) as PiGenericEntry;
-  } catch {
-    return undefined;
-  }
-}
-
-function isPiMessageRole(role: string | undefined): role is "user" | "assistant" | "toolResult" {
-  return role === "user" || role === "assistant" || role === "toolResult";
 }
 
 function parsePiMessageContent(entry: PiGenericEntry, role: "user" | "assistant" | "toolResult") {
@@ -289,8 +298,8 @@ function parsePiEntry(
     return { malformed: true };
   }
 
-  if (entry.type === "session") {
-    updateStateFromHeader(state, entry as PiSessionHeader);
+  if (isPiSessionHeader(entry)) {
+    updateStateFromHeader(state, entry);
     return { malformed: false };
   }
 
@@ -299,7 +308,7 @@ function parsePiEntry(
     return { malformed: false };
   }
 
-  if (entry.type !== "message" || !isPiMessageRole(entry.message?.role)) {
+  if (!isPiMessageEntry(entry) || !isPiMessageRole(entry.message?.role)) {
     return { malformed: false };
   }
 
@@ -312,13 +321,15 @@ function parsePiEntry(
 
   return {
     malformed: false,
-    message: buildPiMessage(entry as PiMessageEntry, state.sessionId ?? "", parsedContent),
+    message: buildPiMessage(entry, state.sessionId, parsedContent),
   };
 }
 
-export async function parsePiSession(jsonlPath: string, project: string): Promise<ParseResult> {
-  const content = fs.readFileSync(jsonlPath, "utf-8");
-  const lines = content.trim().split("\n").filter(Boolean);
+export async function parsePiSession(
+  jsonlPath: string,
+  project: string,
+): Promise<ParseResult | undefined> {
+  const lines = readJsonlLines(jsonlPath);
 
   const messages: CleanMessage[] = [];
   const state: SessionState = {};
@@ -335,21 +346,21 @@ export async function parsePiSession(jsonlPath: string, project: string): Promis
     }
   }
 
-  if (malformedLines > 0) {
-    console.warn(`[pi-parser] Skipped ${malformedLines} malformed line(s) in ${jsonlPath}`);
-  }
+  warnSkippedMalformedLines("pi-parser", malformedLines, jsonlPath);
 
-  const meta: SessionMeta = {
-    id: state.sessionId ?? "",
-    source: "pi",
-    project,
-    cwd: state.cwd,
-    title: state.title,
-    model: state.model,
-    createdAt: state.createdAt,
-    updatedAt: state.updatedAt,
-    parentSessionId: state.parentSessionId,
-  };
-
-  return { meta, messages, prLinks: [] };
+  return finalizeParseResult({
+    meta: {
+      id: state.sessionId,
+      source: "pi",
+      project,
+      cwd: state.cwd,
+      title: state.title,
+      model: state.model,
+      createdAt: state.createdAt,
+      updatedAt: state.updatedAt,
+      parentSessionId: state.parentSessionId,
+    },
+    messages,
+    prLinks: [],
+  });
 }

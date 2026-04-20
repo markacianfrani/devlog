@@ -1,16 +1,22 @@
-import fs from "node:fs";
-import { parseContent, warnUnknownType, type RawContentBlock } from "./shared.ts";
-import type {
-  AssistantMessage,
-  CleanMessage,
-  ContentBlock,
-  ImageContentBlock,
-  ParseResult,
-  PrLink,
-  SessionMeta,
-  TextContentBlock,
-  ToolResultContentBlock,
-  UserMessage,
+import {
+  isObjectRecord,
+  parseContent,
+  readJsonlLines,
+  warnSkippedMalformedLines,
+  warnUnknownType,
+  type RawContentBlock,
+} from "./shared.ts";
+import {
+  MESSAGE_ROLES,
+  createAssistantMessage,
+  createPrLink,
+  createUserMessage,
+  finalizeParseResult,
+  isUserContentBlock,
+  type CleanMessage,
+  type ContentBlock,
+  type ParseResult,
+  type PrLink,
 } from "./types.ts";
 
 const SKIP_TYPES = new Set([
@@ -25,7 +31,7 @@ const SKIP_TYPES = new Set([
   "permission-mode",
   "attachment",
 ]);
-const KNOWN_TYPES = new Set([...SKIP_TYPES, "user", "assistant", "pr-link"]);
+const KNOWN_TYPES = new Set([...SKIP_TYPES, ...MESSAGE_ROLES, "pr-link"]);
 
 interface ClaudeRecord {
   type: string;
@@ -62,6 +68,19 @@ interface SessionState {
   createdAt?: string;
   updatedAt?: string;
   model?: string;
+}
+
+function isClaudeRecord(value: unknown): value is ClaudeRecord {
+  return isObjectRecord(value) && typeof value["type"] === "string";
+}
+
+function parseClaudeJsonLine(line: string): ClaudeRecord | undefined {
+  try {
+    const value = JSON.parse(line) as unknown;
+    return isClaudeRecord(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // Returns "skip" if the record should not produce a message.
@@ -109,12 +128,12 @@ function buildClaudeMessage(
   record: ClaudeRecord,
   sessionId: string | undefined,
   contentBlocks: ContentBlock[],
-): CleanMessage {
+): CleanMessage | undefined {
   const usage = record.message?.usage;
-  const baseMsg = {
-    id: record.uuid ?? "",
-    sessionId: record.sessionId ?? sessionId ?? "",
-    timestamp: record.timestamp ?? "",
+  const messageDraft = {
+    id: record.uuid,
+    sessionId: record.sessionId ?? sessionId,
+    timestamp: record.timestamp,
     ...(record.parentUuid && { parentId: record.parentUuid }),
     ...(record.message?.model && { model: record.message.model }),
     ...(record.agentId && { agentId: record.agentId }),
@@ -129,38 +148,31 @@ function buildClaudeMessage(
   };
 
   if (record.type === "user") {
-    return {
-      ...baseMsg,
-      role: "user",
-      content: contentBlocks.filter(
-        (b): b is TextContentBlock | ToolResultContentBlock | ImageContentBlock =>
-          b.type === "text" || b.type === "tool_result" || b.type === "image",
-      ),
-    } satisfies UserMessage;
+    return createUserMessage(messageDraft, contentBlocks.filter(isUserContentBlock));
   }
 
-  return {
-    ...baseMsg,
-    role: "assistant",
-    content: contentBlocks,
-  } satisfies AssistantMessage;
+  return createAssistantMessage(messageDraft, contentBlocks);
 }
 
 function collectPrLink(record: ClaudeRecord, prLinkMap: Map<string, PrLink>): void {
-  if (record.prUrl) {
-    prLinkMap.set(record.prUrl, {
-      sessionId: record.sessionId ?? "",
-      prNumber: record.prNumber ?? 0,
-      prUrl: record.prUrl,
-      prRepository: record.prRepository ?? "",
-      timestamp: record.timestamp ?? "",
-    });
+  const link = createPrLink({
+    sessionId: record.sessionId,
+    prNumber: record.prNumber,
+    prUrl: record.prUrl,
+    prRepository: record.prRepository,
+    timestamp: record.timestamp,
+  });
+
+  if (link) {
+    prLinkMap.set(link.prUrl, link);
   }
 }
 
-export async function parseClaudeSession(jsonlPath: string, project: string): Promise<ParseResult> {
-  const content = fs.readFileSync(jsonlPath, "utf-8");
-  const lines = content.trim().split("\n").filter(Boolean);
+export async function parseClaudeSession(
+  jsonlPath: string,
+  project: string,
+): Promise<ParseResult | undefined> {
+  const lines = readJsonlLines(jsonlPath);
 
   const messageMap = new Map<string, CleanMessage>();
   const messageOrder: string[] = [];
@@ -169,10 +181,8 @@ export async function parseClaudeSession(jsonlPath: string, project: string): Pr
   let malformedLines = 0;
 
   for (const line of lines) {
-    let record: ClaudeRecord;
-    try {
-      record = JSON.parse(line);
-    } catch {
+    const record = parseClaudeJsonLine(line);
+    if (!record) {
       malformedLines++;
       continue;
     }
@@ -196,6 +206,10 @@ export async function parseClaudeSession(jsonlPath: string, project: string): Pr
     }
 
     const msg = buildClaudeMessage(record, state.sessionId, contentBlocks);
+    if (!msg) {
+      continue;
+    }
+
     if (!messageMap.has(msg.id)) {
       messageOrder.push(msg.id);
     }
@@ -207,20 +221,20 @@ export async function parseClaudeSession(jsonlPath: string, project: string): Pr
     return msg ? [msg] : [];
   });
 
-  if (malformedLines > 0) {
-    console.warn(`[claude-parser] Skipped ${malformedLines} malformed line(s) in ${jsonlPath}`);
-  }
+  warnSkippedMalformedLines("claude-parser", malformedLines, jsonlPath);
 
-  const meta: SessionMeta = {
-    id: state.sessionId ?? "",
-    source: "claude",
-    project,
-    cwd: state.cwd,
-    title: state.title,
-    model: state.model,
-    createdAt: state.createdAt,
-    updatedAt: state.updatedAt,
-  };
-
-  return { meta, messages, prLinks: [...prLinkMap.values()] };
+  return finalizeParseResult({
+    meta: {
+      id: state.sessionId,
+      source: "claude",
+      project,
+      cwd: state.cwd,
+      title: state.title,
+      model: state.model,
+      createdAt: state.createdAt,
+      updatedAt: state.updatedAt,
+    },
+    messages,
+    prLinks: [...prLinkMap.values()],
+  });
 }

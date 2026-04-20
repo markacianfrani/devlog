@@ -4,8 +4,33 @@ import os from "node:os";
 import path from "node:path";
 import { closeDb, getDb } from "../db.ts";
 import { indexAll, indexSession } from "../indexer.ts";
+import type { IndexRedactionContext } from "../redaction.ts";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures");
+
+async function withEnv<T>(
+  name: string,
+  value: string | undefined,
+  run: () => T | Promise<T>,
+): Promise<T> {
+  const previous = process.env[name];
+
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = previous;
+    }
+  }
+}
 
 describe("indexer", () => {
   let tempDir: string;
@@ -102,6 +127,125 @@ describe("indexer", () => {
     expect(resultBlocks[0].tool_output).toContain("my-project");
   });
 
+  test("redacts content before writing to SQLite", async () => {
+    await withEnv("DEVLOG_TEST_SECRET_TOKEN_INDEX", "literal-secret-token-12345", async () => {
+      const db = getDb(dbPath);
+      await indexSession(
+        path.join(FIXTURES_DIR, "claude-redaction.jsonl"),
+        "claude",
+        "test-project",
+        db,
+      );
+
+      const textBlocks = db
+        .query<{ text: string | null }, []>(
+          "SELECT text FROM content_blocks WHERE type = 'text' ORDER BY id",
+        )
+        .all()
+        .flatMap((row) => (row.text ? [row.text] : []));
+      const toolInputs = db
+        .query<{ tool_input: string | null }, []>(
+          "SELECT tool_input FROM content_blocks WHERE type = 'tool_use' ORDER BY id",
+        )
+        .all()
+        .flatMap((row) => (row.tool_input ? [row.tool_input] : []));
+      const toolOutputs = db
+        .query<{ tool_output: string | null }, []>(
+          "SELECT tool_output FROM content_blocks WHERE type = 'tool_result' ORDER BY id",
+        )
+        .all()
+        .flatMap((row) => (row.tool_output ? [row.tool_output] : []));
+      const prUrls = db
+        .query<{ pr_url: string }, []>("SELECT pr_url FROM pr_links ORDER BY rowid")
+        .all()
+        .map((row) => row.pr_url);
+
+      const persisted = [...textBlocks, ...toolInputs, ...toolOutputs, ...prUrls].join("\n");
+
+      expect(persisted).toContain("[REDACTED:openai-project-key]");
+      expect(persisted).toContain("[REDACTED:devlog-test-secret-token-index]");
+      expect(persisted).toContain("[REDACTED:github-token]");
+      expect(persisted).toContain("[REDACTED:huggingface-token]");
+      expect(persisted).toContain("[REDACTED:jwt]");
+
+      expect(persisted).not.toContain("sk-proj-123456789012345678901234");
+      expect(persisted).not.toContain("literal-secret-token-12345");
+      expect(persisted).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
+      expect(persisted).not.toContain("hf_abcdefghijklmnopqrstuvwxyz12");
+    });
+  });
+
+  test("redacts OpenCode and Pi content before writing to SQLite", async () => {
+    const db = getDb(dbPath);
+    const cases: Array<{
+      fixture: string;
+      source: "opencode" | "pi";
+      expected: string[];
+      rawSecrets: string[];
+    }> = [
+      {
+        fixture: "opencode-redaction.jsonl",
+        source: "opencode",
+        expected: [
+          "[REDACTED:github-token]",
+          "Bearer [REDACTED]",
+          "[REDACTED:huggingface-token]",
+          "[REDACTED:jwt]",
+        ],
+        rawSecrets: [
+          "github_pat_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_abc",
+          "ghp_abcdefghijklmnopqrstuvwxyz123456",
+          "hf_abcdefghijklmnopqrstuvwxyz12",
+          "eyJabcdefghijk.eyJlmnopqrstuv.ABCDEFGHIJKLMNO",
+        ],
+      },
+      {
+        fixture: "pi-redaction.jsonl",
+        source: "pi",
+        expected: [
+          "[REDACTED:openrouter-key]",
+          "[REDACTED:github-token]",
+          "Bearer [REDACTED]",
+          "[REDACTED:huggingface-token]",
+          "[REDACTED:jwt]",
+        ],
+        rawSecrets: [
+          "sk-or-abcdefghijklmnopqrstuvwxyz123456",
+          "github_pat_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_abc",
+          "hf_abcdefghijklmnopqrstuvwxyz12",
+          "eyJabcdefghijk.eyJlmnopqrstuv.ABCDEFGHIJKLMNO",
+        ],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const filePath = path.join(FIXTURES_DIR, testCase.fixture);
+      await indexSession(filePath, testCase.source, "test-project", db);
+
+      const rows = db
+        .query<
+          { text: string | null; tool_input: string | null; tool_output: string | null },
+          [string]
+        >(
+          "SELECT text, tool_input, tool_output FROM content_blocks WHERE file_path = ? ORDER BY id",
+        )
+        .all(filePath);
+
+      const persisted = rows
+        .flatMap((row) => [row.text, row.tool_input, row.tool_output])
+        .flatMap((value) => (value ? [value] : []))
+        .join("\n");
+
+      for (const marker of testCase.expected) {
+        expect(persisted).toContain(marker);
+      }
+
+      for (const secret of testCase.rawSecrets) {
+        expect(persisted).not.toContain(secret);
+      }
+    }
+  });
+
   test("indexes OpenCode session", async () => {
     const db = getDb(dbPath);
     await indexSession(
@@ -179,6 +323,41 @@ describe("indexer", () => {
     // Should still have 2 messages (old ones deleted, new ones added)
     const count = db.query<{ count: number }, []>("SELECT COUNT(*) as count FROM messages").get();
     expect(count?.count).toBe(2);
+  });
+
+  test("keeps the previous indexed copy when redaction fails during re-index", async () => {
+    const db = getDb(dbPath);
+    const tempFile = path.join(tempDir, "session.jsonl");
+    fs.copyFileSync(path.join(FIXTURES_DIR, "claude-simple.jsonl"), tempFile);
+
+    await indexSession(tempFile, "claude", "test-project", db);
+
+    const futureTime = Date.now() / 1000 + 1000;
+    fs.utimesSync(tempFile, futureTime, futureTime);
+
+    const failingContext: IndexRedactionContext = {
+      get literalSecrets(): never {
+        throw new Error("redaction unavailable");
+      },
+    };
+
+    await expect(
+      indexSession(tempFile, "claude", "test-project", db, failingContext),
+    ).rejects.toThrow("redaction unavailable");
+
+    const session = db
+      .query<{ session_id: string }, [string]>(
+        "SELECT session_id FROM sessions WHERE file_path = ?",
+      )
+      .get(tempFile);
+    const messageCount = db
+      .query<{ count: number }, [string]>(
+        "SELECT COUNT(*) as count FROM messages WHERE file_path = ?",
+      )
+      .get(tempFile);
+
+    expect(session?.session_id).toBe("test-session-1");
+    expect(messageCount?.count).toBe(2);
   });
 
   test("indexAll indexes entire archive directory", async () => {

@@ -1,18 +1,24 @@
-import fs from "node:fs";
-import { parseContent, warnUnknownType, type RawContentBlock } from "./shared.ts";
-import type {
-  AssistantMessage,
-  CleanMessage,
-  ContentBlock,
-  ImageContentBlock,
-  ParseResult,
-  SessionMeta,
-  TextContentBlock,
-  ToolResultContentBlock,
-  UserMessage,
+import {
+  getFirstTextPreview,
+  isObjectRecord,
+  parseContent,
+  readJsonlLines,
+  warnSkippedMalformedLines,
+  warnUnknownType,
+  type RawContentBlock,
+} from "./shared.ts";
+import {
+  MESSAGE_ROLES,
+  createAssistantMessage,
+  createUserMessage,
+  finalizeParseResult,
+  isUserContentBlock,
+  type CleanMessage,
+  type ContentBlock,
+  type ParseResult,
 } from "./types.ts";
 
-const KNOWN_TYPES = new Set(["user", "assistant"]);
+const KNOWN_TYPES = new Set<string>(MESSAGE_ROLES);
 
 interface OpenCodeRecord {
   type: string;
@@ -47,6 +53,27 @@ interface SessionState {
   model?: string;
 }
 
+interface TokenFields {
+  tokensIn?: number;
+  tokensOut?: number;
+  reasoningTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
+function isOpenCodeRecord(value: unknown): value is OpenCodeRecord {
+  return isObjectRecord(value) && typeof value["type"] === "string";
+}
+
+function parseOpenCodeJsonLine(line: string): OpenCodeRecord | undefined {
+  try {
+    const value = JSON.parse(line) as unknown;
+    return isOpenCodeRecord(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function shouldSkipOpenCodeRecord(record: OpenCodeRecord): boolean {
   if (record.type !== "user" && record.type !== "assistant") {
     if (!KNOWN_TYPES.has(record.type)) {
@@ -78,19 +105,8 @@ function updateSessionState(
     state.model = record.message.model;
   }
   if (!state.title && record.type === "user") {
-    const firstText = contentBlocks.find((b) => b.type === "text");
-    if (firstText && firstText.type === "text") {
-      state.title = firstText.text.slice(0, 200);
-    }
+    state.title = getFirstTextPreview(contentBlocks) ?? state.title;
   }
-}
-
-interface TokenFields {
-  tokensIn?: number;
-  tokensOut?: number;
-  reasoningTokens?: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
 }
 
 function extractTokenFields(tokens: OpenCodeRecord["tokens"]): TokenFields {
@@ -117,50 +133,36 @@ function buildOpenCodeMessage(
   record: OpenCodeRecord,
   sessionId: string | undefined,
   contentBlocks: ContentBlock[],
-): CleanMessage {
-  const baseMsg = {
-    id: record.uuid ?? "",
-    sessionId: record.sessionId ?? sessionId ?? "",
-    timestamp: record.timestamp ?? "",
+): CleanMessage | undefined {
+  const messageDraft = {
+    id: record.uuid,
+    sessionId: record.sessionId ?? sessionId,
+    timestamp: record.timestamp,
     ...(record.parentUuid && { parentId: record.parentUuid }),
     ...(record.message?.model && { model: record.message.model }),
     ...extractTokenFields(record.tokens),
   };
 
   if (record.type === "user") {
-    return {
-      ...baseMsg,
-      role: "user",
-      content: contentBlocks.filter(
-        (b): b is TextContentBlock | ToolResultContentBlock | ImageContentBlock =>
-          b.type === "text" || b.type === "tool_result" || b.type === "image",
-      ),
-    } satisfies UserMessage;
+    return createUserMessage(messageDraft, contentBlocks.filter(isUserContentBlock));
   }
 
-  return {
-    ...baseMsg,
-    role: "assistant",
-    content: contentBlocks,
-  } satisfies AssistantMessage;
+  return createAssistantMessage(messageDraft, contentBlocks);
 }
 
 export async function parseOpenCodeSession(
   jsonlPath: string,
   project: string,
-): Promise<ParseResult> {
-  const content = fs.readFileSync(jsonlPath, "utf-8");
-  const lines = content.trim().split("\n").filter(Boolean);
+): Promise<ParseResult | undefined> {
+  const lines = readJsonlLines(jsonlPath);
 
   const messages: CleanMessage[] = [];
   const state: SessionState = {};
   let malformedLines = 0;
 
   for (const line of lines) {
-    let record: OpenCodeRecord;
-    try {
-      record = JSON.parse(line);
-    } catch {
+    const record = parseOpenCodeJsonLine(line);
+    if (!record) {
       malformedLines++;
       continue;
     }
@@ -175,23 +177,26 @@ export async function parseOpenCodeSession(
     }
 
     updateSessionState(state, record, contentBlocks);
-    messages.push(buildOpenCodeMessage(record, state.sessionId, contentBlocks));
+    const message = buildOpenCodeMessage(record, state.sessionId, contentBlocks);
+    if (message) {
+      messages.push(message);
+    }
   }
 
-  if (malformedLines > 0) {
-    console.warn(`[opencode-parser] Skipped ${malformedLines} malformed line(s) in ${jsonlPath}`);
-  }
+  warnSkippedMalformedLines("opencode-parser", malformedLines, jsonlPath);
 
-  const meta: SessionMeta = {
-    id: state.sessionId ?? "",
-    source: "opencode",
-    project,
-    cwd: state.cwd,
-    title: state.title,
-    model: state.model,
-    createdAt: state.createdAt,
-    updatedAt: state.updatedAt,
-  };
-
-  return { meta, messages, prLinks: [] };
+  return finalizeParseResult({
+    meta: {
+      id: state.sessionId,
+      source: "opencode",
+      project,
+      cwd: state.cwd,
+      title: state.title,
+      model: state.model,
+      createdAt: state.createdAt,
+      updatedAt: state.updatedAt,
+    },
+    messages,
+    prLinks: [],
+  });
 }

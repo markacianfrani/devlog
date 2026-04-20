@@ -1,13 +1,14 @@
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { DEFAULTS } from "./config.ts";
+import type { ContentBlockType, MessageRole, Source } from "./parsers/types.ts";
 
 // Row types for database queries
 export interface SessionRow {
   file_path: string;
   session_id: string;
-  source: "claude" | "opencode" | "pi";
+  source: Source;
   project: string;
   cwd: string | null;
   title: string | null;
@@ -22,7 +23,7 @@ export interface MessageRow {
   id: string;
   file_path: string;
   parent_id: string | null;
-  role: "user" | "assistant";
+  role: MessageRole;
   timestamp: string | null;
   model: string | null;
   tokens_in: number | null;
@@ -38,7 +39,7 @@ export interface ContentBlockRow {
   file_path: string;
   message_id: string;
   block_index: number;
-  type: "text" | "tool_use" | "tool_result" | "thinking" | "image";
+  type: ContentBlockType;
   text: string | null;
   tool_name: string | null;
   tool_input: string | null;
@@ -63,7 +64,7 @@ export interface PrLinkRow {
 }
 
 const SCHEMA_VERSION = 7;
-const DEFAULT_DB_PATH = path.join(os.homedir(), ".local", "state", "devlog", "index.db");
+const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;
 

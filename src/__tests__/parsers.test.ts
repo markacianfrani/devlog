@@ -3,7 +3,10 @@ import path from "node:path";
 import { parseClaudeSession } from "../parsers/claude.ts";
 import { parseOpenCodeSession } from "../parsers/opencode.ts";
 import { parsePiSession } from "../parsers/pi.ts";
+import { parseContentBlock } from "../parsers/shared.ts";
+import { redactParseResult } from "../redaction.ts";
 import type {
+  ParseResult,
   TextContentBlock,
   ThinkingContentBlock,
   ToolResultContentBlock,
@@ -12,11 +15,42 @@ import type {
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures");
 
+async function withEnv<T>(
+  name: string,
+  value: string | undefined,
+  run: () => T | Promise<T>,
+): Promise<T> {
+  const previous = process.env[name];
+
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = previous;
+    }
+  }
+}
+
+function expectParsed(result: ParseResult | undefined): ParseResult {
+  expect(result).toBeDefined();
+  if (!result) {
+    throw new Error("Expected parser to return a result");
+  }
+  return result;
+}
+
 describe("Claude parser", () => {
   test("parses simple user/assistant exchange", async () => {
-    const result = await parseClaudeSession(
-      path.join(FIXTURES_DIR, "claude-simple.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-simple.jsonl"), "test-project"),
     );
 
     expect(result.meta.id).toBe("test-session-1");
@@ -48,9 +82,8 @@ describe("Claude parser", () => {
   });
 
   test("parses tool use and tool results", async () => {
-    const result = await parseClaudeSession(
-      path.join(FIXTURES_DIR, "claude-with-tools.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-with-tools.jsonl"), "test-project"),
     );
 
     expect(result.messages).toHaveLength(4);
@@ -68,10 +101,42 @@ describe("Claude parser", () => {
     expect((toolResultMsg.content[0] as ToolResultContentBlock).toolOutput).toContain("my-project");
   });
 
+  test("keeps parsing separate from redaction transform", async () => {
+    await withEnv("DEVLOG_TEST_SECRET_TOKEN_PARSE", "literal-secret-token-12345", async () => {
+      const parsed = expectParsed(
+        await parseClaudeSession(path.join(FIXTURES_DIR, "claude-redaction.jsonl"), "test-project"),
+      );
+
+      const parsedUserText = (parsed.messages[0].content[0] as TextContentBlock).text;
+      expect(parsedUserText).toContain("sk-proj-123456789012345678901234");
+      expect(parsedUserText).toContain("literal-secret-token-12345");
+
+      const redacted = redactParseResult(parsed);
+
+      const firstUserText = (redacted.messages[0].content[0] as TextContentBlock).text;
+      expect(firstUserText).toContain("[REDACTED:openai-project-key]");
+      expect(firstUserText).toContain("[REDACTED:devlog-test-secret-token-parse]");
+      expect(firstUserText).not.toContain("sk-proj-123456789012345678901234");
+      expect(firstUserText).not.toContain("literal-secret-token-12345");
+
+      const toolUse = redacted.messages[1].content[0] as ToolUseContentBlock;
+      expect(toolUse.toolInput).toContain("Bearer [REDACTED]");
+      expect(toolUse.toolInput).toContain("[REDACTED:github-token]");
+      expect(toolUse.toolInput).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
+
+      const toolResult = redacted.messages[2].content[0] as ToolResultContentBlock;
+      expect(toolResult.toolOutput).toContain("[REDACTED:jwt]");
+      expect(toolResult.toolOutput).toContain("[REDACTED:huggingface-token]");
+      expect(toolResult.toolOutput).not.toContain("hf_abcdefghijklmnopqrstuvwxyz12");
+
+      expect(redacted.prLinks[0]?.prUrl).toContain("[REDACTED:devlog-test-secret-token-parse]");
+      expect(redacted.prLinks[0]?.prUrl).not.toContain("literal-secret-token-12345");
+    });
+  });
+
   test("extracts agentId for agent sessions", async () => {
-    const result = await parseClaudeSession(
-      path.join(FIXTURES_DIR, "claude-agent.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-agent.jsonl"), "test-project"),
     );
 
     expect(result.messages).toHaveLength(2);
@@ -80,12 +145,10 @@ describe("Claude parser", () => {
   });
 
   test("filters out noise records and preserves thinking blocks", async () => {
-    const result = await parseClaudeSession(
-      path.join(FIXTURES_DIR, "claude-noise.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-noise.jsonl"), "test-project"),
     );
 
-    // Should only have 2 messages: real user + assistant (meta message filtered)
     expect(result.messages).toHaveLength(2);
 
     const userMsg = result.messages[0];
@@ -102,9 +165,11 @@ describe("Claude parser", () => {
   });
 
   test("preserves thinking blocks and token data from thinking-only assistant messages", async () => {
-    const result = await parseClaudeSession(
-      path.join(FIXTURES_DIR, "claude-thinking-only.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseClaudeSession(
+        path.join(FIXTURES_DIR, "claude-thinking-only.jsonl"),
+        "test-project",
+      ),
     );
 
     expect(result.messages).toHaveLength(2);
@@ -122,9 +187,8 @@ describe("Claude parser", () => {
   });
 
   test("extracts pr-link records", async () => {
-    const result = await parseClaudeSession(
-      path.join(FIXTURES_DIR, "claude-noise.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-noise.jsonl"), "test-project"),
     );
 
     expect(result.prLinks).toHaveLength(1);
@@ -138,18 +202,19 @@ describe("Claude parser", () => {
   });
 
   test("extracts session title from summary record", async () => {
-    const result = await parseClaudeSession(
-      path.join(FIXTURES_DIR, "claude-noise.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-noise.jsonl"), "test-project"),
     );
 
     expect(result.meta.title).toBe("Test session summary");
   });
 
   test("extracts session title from custom-title record", async () => {
-    const result = await parseClaudeSession(
-      path.join(FIXTURES_DIR, "claude-custom-title.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseClaudeSession(
+        path.join(FIXTURES_DIR, "claude-custom-title.jsonl"),
+        "test-project",
+      ),
     );
 
     expect(result.meta.title).toBe("My custom session title");
@@ -157,18 +222,19 @@ describe("Claude parser", () => {
   });
 
   test("returns empty prLinks when none present", async () => {
-    const result = await parseClaudeSession(
-      path.join(FIXTURES_DIR, "claude-simple.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-simple.jsonl"), "test-project"),
     );
 
     expect(result.prLinks).toEqual([]);
   });
 
   test("deduplicates messages with the same uuid, keeping the last", async () => {
-    const result = await parseClaudeSession(
-      path.join(FIXTURES_DIR, "claude-duplicate-uuids.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseClaudeSession(
+        path.join(FIXTURES_DIR, "claude-duplicate-uuids.jsonl"),
+        "test-project",
+      ),
     );
 
     expect(result.messages).toHaveLength(3);
@@ -182,9 +248,8 @@ describe("Claude parser", () => {
 
 describe("OpenCode parser", () => {
   test("parses simple session", async () => {
-    const result = await parseOpenCodeSession(
-      path.join(FIXTURES_DIR, "opencode-simple.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseOpenCodeSession(path.join(FIXTURES_DIR, "opencode-simple.jsonl"), "test-project"),
     );
 
     expect(result.meta.id).toBe("ses_test123");
@@ -204,9 +269,8 @@ describe("OpenCode parser", () => {
   });
 
   test("parses tool use with inline results", async () => {
-    const result = await parseOpenCodeSession(
-      path.join(FIXTURES_DIR, "opencode-simple.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseOpenCodeSession(path.join(FIXTURES_DIR, "opencode-simple.jsonl"), "test-project"),
     );
 
     const toolMsg = result.messages[2];
@@ -218,18 +282,45 @@ describe("OpenCode parser", () => {
   });
 
   test("extracts title from first user message", async () => {
-    const result = await parseOpenCodeSession(
-      path.join(FIXTURES_DIR, "opencode-simple.jsonl"),
-      "test-project",
+    const result = expectParsed(
+      await parseOpenCodeSession(path.join(FIXTURES_DIR, "opencode-simple.jsonl"), "test-project"),
     );
 
     expect(result.meta.title).toBe("Hello");
+  });
+
+  test("keeps OpenCode parsing separate from redaction transform", async () => {
+    const parsed = expectParsed(
+      await parseOpenCodeSession(
+        path.join(FIXTURES_DIR, "opencode-redaction.jsonl"),
+        "test-project",
+      ),
+    );
+
+    const parsedUserText = (parsed.messages[0].content[0] as TextContentBlock).text;
+    expect(parsedUserText).toContain(
+      "github_pat_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_abc",
+    );
+
+    const redacted = redactParseResult(parsed);
+    const firstUserText = (redacted.messages[0].content[0] as TextContentBlock).text;
+    expect(firstUserText).toBe("Use [REDACTED:github-token] for testing");
+
+    const toolUse = redacted.messages[1].content[0] as ToolUseContentBlock;
+    expect(toolUse.toolInput).toContain("Bearer [REDACTED]");
+    expect(toolUse.toolInput).toContain("[REDACTED:github-token]");
+
+    const toolResult = redacted.messages[1].content[1] as ToolResultContentBlock;
+    expect(toolResult.toolOutput).toContain("[REDACTED:huggingface-token]");
+    expect(toolResult.toolOutput).toContain("[REDACTED:jwt]");
   });
 });
 
 describe("Pi parser", () => {
   test("parses pi session format", async () => {
-    const result = await parsePiSession(path.join(FIXTURES_DIR, "pi-simple.jsonl"), "test-project");
+    const result = expectParsed(
+      await parsePiSession(path.join(FIXTURES_DIR, "pi-simple.jsonl"), "test-project"),
+    );
 
     expect(result.meta.id).toBe("pi-session-1");
     expect(result.meta.source).toBe("pi");
@@ -256,5 +347,35 @@ describe("Pi parser", () => {
     expect(toolResult.content).toHaveLength(1);
     expect(toolResult.content[0].type).toBe("tool_result");
     expect((toolResult.content[0] as ToolResultContentBlock).toolOutput).toContain("auth");
+  });
+
+  test("keeps Pi parsing separate from redaction transform", async () => {
+    const parsed = expectParsed(
+      await parsePiSession(path.join(FIXTURES_DIR, "pi-redaction.jsonl"), "test-project"),
+    );
+
+    const parsedUserText = (parsed.messages[0].content[0] as TextContentBlock).text;
+    expect(parsedUserText).toContain("sk-or-abcdefghijklmnopqrstuvwxyz123456");
+
+    const redacted = redactParseResult(parsed);
+
+    const firstUserText = (redacted.messages[0].content[0] as TextContentBlock).text;
+    expect(firstUserText).toContain("[REDACTED:openrouter-key]");
+    expect(firstUserText).not.toContain("sk-or-abcdefghijklmnopqrstuvwxyz123456");
+
+    const toolUse = redacted.messages[1].content[1] as ToolUseContentBlock;
+    expect(toolUse.toolInput).toContain("Bearer [REDACTED]");
+    expect(toolUse.toolInput).toContain("[REDACTED:github-token]");
+
+    const toolResult = redacted.messages[2].content[0] as ToolResultContentBlock;
+    expect(toolResult.toolOutput).toContain("[REDACTED:huggingface-token]");
+    expect(toolResult.toolOutput).toContain("[REDACTED:jwt]");
+  });
+});
+
+describe("shared parser helpers", () => {
+  test("skips tool_result blocks that are missing content", () => {
+    const parsed = parseContentBlock({ type: "tool_result" }, "test-parser");
+    expect(parsed).toBeUndefined();
   });
 });

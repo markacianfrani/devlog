@@ -1,10 +1,15 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  createIndexRedactionContext,
+  redactForIndexing,
+  type IndexRedactionContext,
+} from "./redaction.ts";
 import { parseClaudeSession } from "./parsers/claude.ts";
 import { parseOpenCodeSession } from "./parsers/opencode.ts";
 import { parsePiSession } from "./parsers/pi.ts";
-import type { ParseResult } from "./parsers/types.ts";
+import type { ParseResult, Source } from "./parsers/types.ts";
 
 export interface IndexFailure {
   filePath: string;
@@ -21,7 +26,7 @@ export interface IndexStats {
 
 export interface IndexProgressEvent {
   filePath: string;
-  source: "claude" | "opencode" | "pi";
+  source: Source;
   project: string;
   messageCount?: number;
   error?: string;
@@ -203,9 +208,10 @@ function insertPrLinks(db: Database, result: ParseResult, filePath: string) {
 
 export async function indexSession(
   jsonlPath: string,
-  source: "claude" | "opencode" | "pi",
+  source: Source,
   project: string,
   db: Database,
+  redactionContext?: IndexRedactionContext,
 ): Promise<{ indexed: boolean; messageCount: number }> {
   const mtime = getMtime(jsonlPath);
   const existing = checkSession(db, jsonlPath, mtime);
@@ -214,11 +220,7 @@ export async function indexSession(
     return { indexed: false, messageCount: 0 };
   }
 
-  if (existing.exists && existing.sessionId) {
-    deleteSession(db, jsonlPath, existing.sessionId);
-  }
-
-  let result: ParseResult;
+  let result: ParseResult | undefined;
   if (source === "claude") {
     result = await parseClaudeSession(jsonlPath, project);
   } else if (source === "opencode") {
@@ -227,12 +229,21 @@ export async function indexSession(
     result = await parsePiSession(jsonlPath, project);
   }
 
-  if (!result.meta.id || result.messages.length === 0) {
+  if (!result) {
+    return { indexed: false, messageCount: 0 };
+  }
+
+  result = redactForIndexing(result, redactionContext);
+
+  if (result.messages.length === 0) {
     return { indexed: false, messageCount: 0 };
   }
 
   db.exec("BEGIN TRANSACTION");
   try {
+    if (existing.exists && existing.sessionId) {
+      deleteSession(db, jsonlPath, existing.sessionId);
+    }
     insertSession(db, result, jsonlPath, mtime);
     insertMessages(db, result, jsonlPath);
     insertPrLinks(db, result, jsonlPath);
@@ -269,7 +280,7 @@ function findJsonlFiles(dir: string): string[] {
 function getProjectAndSource(
   filePath: string,
   archiveDir: string,
-): { project: string; source: "claude" | "opencode" | "pi" } | undefined {
+): { project: string; source: Source } | undefined {
   const relative = path.relative(archiveDir, filePath);
   const parts = relative.split(path.sep);
 
@@ -310,6 +321,7 @@ export async function indexAll(
   const jsonlFiles = findJsonlFiles(projectsDir);
   callbacks?.onStart?.(jsonlFiles.length);
 
+  const redactionContext = createIndexRedactionContext();
   let processed = 0;
 
   for (const filePath of jsonlFiles) {
@@ -319,7 +331,7 @@ export async function indexAll(
     }
 
     try {
-      const result = await indexSession(filePath, info.source, info.project, db);
+      const result = await indexSession(filePath, info.source, info.project, db, redactionContext);
       if (result.indexed) {
         stats.sessionsIndexed++;
         stats.messagesIndexed += result.messageCount;

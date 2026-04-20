@@ -4,6 +4,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { loadConfig } from "./config.ts";
 import {
   countUserMessages,
   iterateOpencodeDbSessions,
@@ -21,36 +22,6 @@ import {
   type CliOptions,
   type SourceSummary,
 } from "./progress.ts";
-
-interface Config {
-  archiveDir?: string;
-  excludeProjects?: string[];
-}
-
-const CONFIG_PATH = path.join(os.homedir(), ".config", "devlog", "config.json");
-
-function loadConfig(): Required<Config> {
-  const defaults = {
-    archiveDir: path.join(os.homedir(), ".config", "devlog"),
-    excludeProjects: [] as string[],
-  };
-
-  if (!fs.existsSync(CONFIG_PATH)) {
-    return defaults;
-  }
-
-  try {
-    const content = fs.readFileSync(CONFIG_PATH, "utf-8");
-    const config: Config = JSON.parse(content);
-
-    return {
-      archiveDir: config.archiveDir ?? defaults.archiveDir,
-      excludeProjects: config.excludeProjects ?? defaults.excludeProjects,
-    };
-  } catch {
-    return defaults;
-  }
-}
 
 const config = loadConfig();
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
@@ -417,6 +388,120 @@ function archiveOpencodeSession(
   return { archived: true, messages: userMessages };
 }
 
+interface ArchiveStats {
+  archived: number;
+  skipped: number;
+  activity: number;
+  processed: number;
+}
+
+function createArchiveStats(): ArchiveStats {
+  return { archived: 0, skipped: 0, activity: 0, processed: 0 };
+}
+
+function tickArchiveProgress(progress: ProgressReporter | undefined, stats: ArchiveStats) {
+  progress?.tick({ processed: stats.processed, archived: stats.archived, skipped: stats.skipped });
+}
+
+function recordArchived(stats: ArchiveStats, activity: number, progress?: ProgressReporter) {
+  stats.archived++;
+  stats.activity += activity;
+  stats.processed++;
+  tickArchiveProgress(progress, stats);
+}
+
+function recordSkipped(stats: ArchiveStats, progress?: ProgressReporter) {
+  stats.skipped++;
+  stats.processed++;
+  tickArchiveProgress(progress, stats);
+}
+
+function makeSummary(
+  label: string,
+  stats: ArchiveStats,
+  activityLabel: string,
+  warnings: number = 0,
+): SourceSummary {
+  return {
+    label,
+    archived: stats.archived,
+    skipped: stats.skipped,
+    activity: stats.activity,
+    activityLabel,
+    warnings,
+  };
+}
+
+function logProjectRollup(
+  logger: ReturnType<typeof createLogger>,
+  verbose: boolean,
+  projectSlug: string,
+  archived: number,
+  activity: number,
+  activityLabel: string,
+) {
+  if (!verbose) {
+    return;
+  }
+
+  if (archived > 0) {
+    logger.verbose(`  📊 ${projectSlug}: ${archived} new, ${activity} ${activityLabel}\n`);
+  } else {
+    logger.verbose(`  📊 ${projectSlug}: all up to date\n`);
+  }
+}
+
+function archiveClaudeProject(
+  project: string,
+  logger: ReturnType<typeof createLogger>,
+  options: CliOptions,
+  stats: ArchiveStats,
+  progress?: ProgressReporter,
+) {
+  if (matchesExcludedProject(project)) {
+    logger.verbose(`🚫 Skipping excluded project: ${project}`);
+    return;
+  }
+
+  const projectPath = path.join(CLAUDE_PROJECTS_DIR, project);
+  if (!fs.statSync(projectPath).isDirectory()) {
+    return;
+  }
+
+  const conversationFiles = getConversationFiles(projectPath);
+  if (conversationFiles.length === 0) {
+    return;
+  }
+
+  const projectSlug = getClaudeProjectSlug(project);
+  logger.verbose(`📁 Project: ${projectSlug} (${conversationFiles.length} conversations)`);
+
+  let projectArchived = 0;
+  let projectExchanges = 0;
+  for (const { sourcePath, archiveRelPath } of conversationFiles) {
+    if (!archiveConversation(sourcePath, projectSlug, PROJECTS_ARCHIVE_DIR, archiveRelPath)) {
+      logger.verbose(`  ⏭️  Skipped: ${archiveRelPath} (already archived)`);
+      recordSkipped(stats, progress);
+      continue;
+    }
+
+    const exchanges = countExchanges(sourcePath);
+    logger.verbose(`  ✅ Archived: ${archiveRelPath} (${exchanges} exchanges)`);
+    projectArchived++;
+    projectExchanges += exchanges;
+    recordArchived(stats, exchanges, progress);
+  }
+
+  logProjectRollup(
+    logger,
+    options.verbose,
+    projectSlug,
+    projectArchived,
+    projectExchanges,
+    "exchanges",
+  );
+}
+
 function archiveClaudeProjects(
   options: CliOptions = DEFAULT_CLI_OPTIONS,
   progress?: ProgressReporter,
@@ -424,92 +509,58 @@ function archiveClaudeProjects(
   const logger = createLogger(options);
   if (!fs.existsSync(CLAUDE_PROJECTS_DIR)) {
     progress?.warn(`[devlog] Claude projects directory not found: ${CLAUDE_PROJECTS_DIR}`);
-    return {
-      label: "Claude",
-      archived: 0,
-      skipped: 0,
-      activity: 0,
-      activityLabel: "exchanges",
-      warnings: 1,
-    };
+    return makeSummary("Claude", createArchiveStats(), "exchanges", 1);
   }
 
-  let archived = 0;
-  let skipped = 0;
-  let exchanges = 0;
-  let processed = 0;
-
+  const stats = createArchiveStats();
   progress?.start("Claude");
   progress?.setTotal(countClaudeConversations());
 
   for (const project of fs.readdirSync(CLAUDE_PROJECTS_DIR)) {
-    if (matchesExcludedProject(project)) {
-      logger.verbose(`🚫 Skipping excluded project: ${project}`);
-      continue;
-    }
-
-    const projectPath = path.join(CLAUDE_PROJECTS_DIR, project);
-    if (!fs.statSync(projectPath).isDirectory()) {
-      continue;
-    }
-
-    const conversationFiles = getConversationFiles(projectPath);
-    if (conversationFiles.length === 0) {
-      continue;
-    }
-
-    const projectSlug = getClaudeProjectSlug(project);
-    logger.verbose(`📁 Project: ${projectSlug} (${conversationFiles.length} conversations)`);
-
-    let projectArchived = 0;
-    let projectExchanges = 0;
-
-    for (const { sourcePath, archiveRelPath } of conversationFiles) {
-      const didArchive = archiveConversation(
-        sourcePath,
-        projectSlug,
-        PROJECTS_ARCHIVE_DIR,
-        archiveRelPath,
-      );
-
-      if (didArchive) {
-        const ex = countExchanges(sourcePath);
-        logger.verbose(`  ✅ Archived: ${archiveRelPath} (${ex} exchanges)`);
-        projectArchived++;
-        projectExchanges += ex;
-        archived++;
-        exchanges += ex;
-        processed++;
-        progress?.tick({ processed, archived, skipped });
-      } else {
-        logger.verbose(`  ⏭️  Skipped: ${archiveRelPath} (already archived)`);
-        skipped++;
-        processed++;
-        progress?.tick({ processed, archived, skipped });
-      }
-    }
-
-    if (options.verbose) {
-      if (projectArchived > 0) {
-        logger.verbose(
-          `  📊 ${projectSlug}: ${projectArchived} new, ${projectExchanges} exchanges\n`,
-        );
-      } else {
-        logger.verbose(`  📊 ${projectSlug}: all up to date\n`);
-      }
-    }
+    archiveClaudeProject(project, logger, options, stats, progress);
   }
 
   progress?.end();
+  return makeSummary("Claude", stats, "exchanges");
+}
 
-  return {
-    label: "Claude",
-    archived,
-    skipped,
-    activity: exchanges,
-    activityLabel: "exchanges",
-    warnings: 0,
-  };
+function archiveOpencodeDbSession(
+  projectSlug: string,
+  session: OpencodeSession,
+  messagesWithParts: ReturnType<typeof loadMessagesFromFiles>,
+  logger: ReturnType<typeof createLogger>,
+  stats: ArchiveStats,
+  progress?: ProgressReporter,
+) {
+  const archivePath = path.join(
+    PROJECTS_ARCHIVE_DIR,
+    projectSlug,
+    "opencode",
+    `${session.id}.jsonl`,
+  );
+
+  if (fs.existsSync(archivePath)) {
+    const archiveMtime = fs.statSync(archivePath).mtimeMs;
+    if (session.time.updated <= archiveMtime) {
+      logger.verbose(`  ⏭️  Skipped: ${session.id} (already archived)`);
+      recordSkipped(stats, progress);
+      return;
+    }
+  }
+
+  const lines = reconstructSessionJsonl(session.id, session, messagesWithParts);
+  if (lines.length === 0) {
+    recordSkipped(stats, progress);
+    return;
+  }
+
+  ensureDir(path.dirname(archivePath));
+  fs.writeFileSync(archivePath, lines.join("\n") + "\n");
+
+  const userMessages = countUserMessages(messagesWithParts);
+  logger.verbose(`  ✅ Archived: ${session.id}.jsonl (${userMessages} messages)`);
+  logger.verbose(`  📁 Project: ${projectSlug}`);
+  recordArchived(stats, userMessages, progress);
 }
 
 function archiveOpencodeFromDb(
@@ -518,22 +569,10 @@ function archiveOpencodeFromDb(
 ): { handled: boolean; summary: SourceSummary } {
   const logger = createLogger(options);
   if (!fs.existsSync(OPENCODE_DB_PATH)) {
-    return {
-      handled: false,
-      summary: {
-        label: "opencode",
-        archived: 0,
-        skipped: 0,
-        activity: 0,
-        activityLabel: "messages",
-        warnings: 0,
-      },
-    };
+    return { handled: false, summary: makeSummary("opencode", createArchiveStats(), "messages") };
   }
 
-  let archived = 0;
-  let skipped = 0;
-  let messages = 0;
+  const stats = createArchiveStats();
 
   try {
     const db = new Database(OPENCODE_DB_PATH, { readonly: true });
@@ -541,8 +580,6 @@ function archiveOpencodeFromDb(
       logger.verbose("🟦 Processing opencode sessions (from DB)...\n");
       progress?.start("opencode");
       progress?.setTotal(getOpencodeDbSessionCount(db));
-
-      let processed = 0;
 
       for (const { projectSlug, session, messagesWithParts } of iterateOpencodeDbSessions(
         db,
@@ -553,74 +590,81 @@ function archiveOpencodeFromDb(
           continue;
         }
 
-        const archivePath = path.join(
-          PROJECTS_ARCHIVE_DIR,
-          projectSlug,
-          "opencode",
-          `${session.id}.jsonl`,
-        );
-
-        if (fs.existsSync(archivePath)) {
-          const archiveMtime = fs.statSync(archivePath).mtimeMs;
-          if (session.time.updated <= archiveMtime) {
-            skipped++;
-            logger.verbose(`  ⏭️  Skipped: ${session.id} (already archived)`);
-            processed++;
-            progress?.tick({ processed, archived, skipped });
-            continue;
-          }
-        }
-
-        const lines = reconstructSessionJsonl(session.id, session, messagesWithParts);
-        if (lines.length === 0) {
-          processed++;
-          skipped++;
-          progress?.tick({ processed, archived, skipped });
-          continue;
-        }
-
-        ensureDir(path.dirname(archivePath));
-        fs.writeFileSync(archivePath, lines.join("\n") + "\n");
-
-        const userMessages = countUserMessages(messagesWithParts);
-        logger.verbose(`  ✅ Archived: ${session.id}.jsonl (${userMessages} messages)`);
-        logger.verbose(`  📁 Project: ${projectSlug}`);
-        archived++;
-        messages += userMessages;
-        processed++;
-        progress?.tick({ processed, archived, skipped });
+        archiveOpencodeDbSession(projectSlug, session, messagesWithParts, logger, stats, progress);
       }
     } finally {
       progress?.end();
       db.close();
     }
-    return {
-      handled: true,
-      summary: {
-        label: "opencode",
-        archived,
-        skipped,
-        activity: messages,
-        activityLabel: "messages",
-        warnings: 0,
-      },
-    };
+
+    return { handled: true, summary: makeSummary("opencode", stats, "messages") };
   } catch (err) {
     progress?.warn(
       `[devlog] Failed to read opencode DB, falling back to flat files: ${err instanceof Error ? err.message : err}`,
     );
     return {
       handled: false,
-      summary: {
-        label: "opencode",
-        archived: 0,
-        skipped: 0,
-        activity: 0,
-        activityLabel: "messages",
-        warnings: 1,
-      },
+      summary: makeSummary("opencode", createArchiveStats(), "messages", 1),
     };
   }
+}
+
+function archiveOpencodeWorkspace(
+  workspace: string,
+  logger: ReturnType<typeof createLogger>,
+  options: CliOptions,
+  stats: ArchiveStats,
+  progress?: ProgressReporter,
+) {
+  const workspacePath = path.join(OPENCODE_SESSIONS_DIR, workspace);
+  if (!fs.statSync(workspacePath).isDirectory()) {
+    return;
+  }
+
+  const sessionFiles = getOpencodeSessionFiles(workspacePath);
+  if (sessionFiles.length === 0) {
+    return;
+  }
+
+  const projectFile = path.join(OPENCODE_PROJECT_DIR, `${workspace}.json`);
+  const worktree = getWorktreeFromProjectFile(projectFile);
+  const projectSlug = getOpencodeProjectSlug(workspace, projectFile);
+  if (matchesExcludedProject(workspace, projectSlug, worktree)) {
+    logger.verbose(`🚫 Skipping excluded project: ${projectSlug}`);
+    return;
+  }
+
+  logger.verbose(`📁 Project: ${projectSlug} (${sessionFiles.length} sessions)`);
+  if (archiveOpencodeProject(workspace, projectSlug, PROJECTS_ARCHIVE_DIR)) {
+    logger.verbose(`  ✅ Archived: project.json (metadata)`);
+  }
+
+  let workspaceArchived = 0;
+  let workspaceMessages = 0;
+  for (const filePath of sessionFiles) {
+    const fileName = path.basename(filePath, ".json");
+    const result = archiveOpencodeSession(filePath, projectSlug, PROJECTS_ARCHIVE_DIR);
+
+    if (!result.archived) {
+      logger.verbose(`  ⏭️  Skipped: ${fileName} (already archived or empty)`);
+      recordSkipped(stats, progress);
+      continue;
+    }
+
+    logger.verbose(`  ✅ Archived: ${fileName}.jsonl (${result.messages} messages)`);
+    workspaceArchived++;
+    workspaceMessages += result.messages;
+    recordArchived(stats, result.messages, progress);
+  }
+
+  logProjectRollup(
+    logger,
+    options.verbose,
+    projectSlug,
+    workspaceArchived,
+    workspaceMessages,
+    "messages",
+  );
 }
 
 function archiveOpencodeFromFiles(
@@ -630,84 +674,16 @@ function archiveOpencodeFromFiles(
   const logger = createLogger(options);
   logger.verbose("🟦 Processing opencode sessions (from flat files)...\n");
 
-  let archived = 0;
-  let skipped = 0;
-  let messages = 0;
-  let processed = 0;
-
+  const stats = createArchiveStats();
   progress?.start("opencode");
   progress?.setTotal(countOpencodeFileSessions());
 
   for (const workspace of fs.readdirSync(OPENCODE_SESSIONS_DIR)) {
-    const workspacePath = path.join(OPENCODE_SESSIONS_DIR, workspace);
-    if (!fs.statSync(workspacePath).isDirectory()) {
-      continue;
-    }
-
-    const sessionFiles = getOpencodeSessionFiles(workspacePath);
-    if (sessionFiles.length === 0) {
-      continue;
-    }
-
-    const projectFile = path.join(OPENCODE_PROJECT_DIR, `${workspace}.json`);
-    const worktree = getWorktreeFromProjectFile(projectFile);
-    const projectSlug = getOpencodeProjectSlug(workspace, projectFile);
-    if (matchesExcludedProject(workspace, projectSlug, worktree)) {
-      logger.verbose(`🚫 Skipping excluded project: ${projectSlug}`);
-      continue;
-    }
-
-    logger.verbose(`📁 Project: ${projectSlug} (${sessionFiles.length} sessions)`);
-
-    const projectArchived = archiveOpencodeProject(workspace, projectSlug, PROJECTS_ARCHIVE_DIR);
-    if (projectArchived) {
-      logger.verbose(`  ✅ Archived: project.json (metadata)`);
-    }
-
-    let workspaceArchived = 0;
-    let workspaceMessages = 0;
-
-    for (const filePath of sessionFiles) {
-      const fileName = path.basename(filePath, ".json");
-      const result = archiveOpencodeSession(filePath, projectSlug, PROJECTS_ARCHIVE_DIR);
-
-      if (result.archived) {
-        logger.verbose(`  ✅ Archived: ${fileName}.jsonl (${result.messages} messages)`);
-        workspaceArchived++;
-        workspaceMessages += result.messages;
-        archived++;
-        messages += result.messages;
-        processed++;
-        progress?.tick({ processed, archived, skipped });
-      } else {
-        logger.verbose(`  ⏭️  Skipped: ${fileName} (already archived or empty)`);
-        skipped++;
-        processed++;
-        progress?.tick({ processed, archived, skipped });
-      }
-    }
-
-    if (options.verbose) {
-      if (workspaceArchived > 0) {
-        logger.verbose(
-          `  📊 ${projectSlug}: ${workspaceArchived} new, ${workspaceMessages} messages\n`,
-        );
-      } else {
-        logger.verbose(`  📊 ${projectSlug}: all up to date\n`);
-      }
-    }
+    archiveOpencodeWorkspace(workspace, logger, options, stats, progress);
   }
 
   progress?.end();
-
-  return {
-    label: "opencode",
-    archived,
-    skipped,
-    activity: messages,
-    activityLabel: "messages",
-    warnings: 0,
-  };
+  return makeSummary("opencode", stats, "messages");
 }
 
 function* iteratePiSessionFiles(): Generator<{ sourcePath: string; fileName: string }> {
@@ -853,10 +829,11 @@ async function archiveMain(options: CliOptions = DEFAULT_CLI_OPTIONS) {
 }
 
 async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_CLI_OPTIONS) {
-  const { getDb, resetDb, DEFAULT_DB_PATH } = await import("./db.ts");
+  const { getDb, resetDb } = await import("./db.ts");
   const { indexAll } = await import("./indexer.ts");
   const startedAt = Date.now();
   const progress = new ProgressReporter(options);
+  const dbPath = config.dbPath;
 
   if (options.verbose) {
     console.log(
@@ -865,10 +842,10 @@ async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_CLI_OPT
   }
 
   if (rebuild) {
-    resetDb(DEFAULT_DB_PATH);
+    resetDb(dbPath);
   }
 
-  const db = getDb(DEFAULT_DB_PATH);
+  const db = getDb(dbPath);
   const stats = await indexAll(ARCHIVE_DIR, rebuild, db, {
     onStart(total) {
       progress.start("index", total);
@@ -889,7 +866,7 @@ async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_CLI_OPT
   });
   progress.end();
 
-  printIndexSummary(stats, DEFAULT_DB_PATH, Date.now() - startedAt);
+  printIndexSummary(stats, dbPath, Date.now() - startedAt);
 }
 
 export {

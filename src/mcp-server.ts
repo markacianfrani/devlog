@@ -1,7 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import path from "node:path";
 import { z } from "zod";
+import { loadConfig } from "./config.ts";
 import { getDb } from "./db.ts";
+
+const CONFIGURED_DB_PATH = loadConfig().dbPath;
 
 const INSTRUCTIONS = `You have access to the devlog session index — a SQLite database of past Claude Code and opencode conversations.
 
@@ -98,7 +101,7 @@ function registerSearch(server: McpServer) {
         .describe("Max results (default 10)"),
     },
     async ({ query, limit }) => {
-      const db = getDb();
+      const db = getDb(CONFIGURED_DB_PATH);
       const rows = db
         .query<SearchRow, [string, number]>(
           `SELECT DISTINCT s.session_id, s.source, s.project, s.cwd, s.title, s.model,
@@ -147,7 +150,7 @@ function registerListSessions(server: McpServer) {
         .describe("Max results (default 20)"),
     },
     async ({ project, source, limit }) => {
-      const db = getDb();
+      const db = getDb(CONFIGURED_DB_PATH);
 
       // SQLite requires null (not undefined) to bind SQL NULL — disable unicorn/no-null here
       /* eslint-disable unicorn/no-null */
@@ -283,7 +286,7 @@ function registerGetSession(server: McpServer) {
         .describe("Message offset for pagination (default 0)"),
     },
     async ({ id: session_id, include_tools, include_thinking, limit, offset }) => {
-      const db = getDb();
+      const db = getDb(CONFIGURED_DB_PATH);
 
       const session = db
         .query<SessionRow, [string]>(
@@ -359,7 +362,7 @@ function registerSchema(server: McpServer) {
     "Return the exact column names for all devlog tables. Call this before writing a query tool call to avoid column name errors.",
     {},
     () => {
-      const db = getDb();
+      const db = getDb(CONFIGURED_DB_PATH);
       const tables = ["sessions", "messages", "content_blocks", "pr_links", "messages_fts"];
       const lines: string[] = [];
       for (const table of tables) {
@@ -383,7 +386,7 @@ function registerQuery(server: McpServer) {
       sql: z.string().describe("SQL SELECT query to execute"),
     },
     async ({ sql }) => {
-      const db = getDb();
+      const db = getDb(CONFIGURED_DB_PATH);
       const rows = db.query(sql).all();
       const text = rows.length === 0 ? "(no rows)" : JSON.stringify(rows, undefined, 2);
       return { content: [{ type: "text", text }] };

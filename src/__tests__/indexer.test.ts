@@ -335,11 +335,15 @@ describe("indexer", () => {
     const futureTime = Date.now() / 1000 + 1000;
     fs.utimesSync(tempFile, futureTime, futureTime);
 
-    const invalidContext = { literalSecrets: 1 } as unknown as IndexRedactionContext;
+    const failingContext: IndexRedactionContext = {
+      get literalSecrets(): never {
+        throw new Error("redaction unavailable");
+      },
+    };
 
     await expect(
-      indexSession(tempFile, "claude", "test-project", db, invalidContext),
-    ).rejects.toThrow();
+      indexSession(tempFile, "claude", "test-project", db, failingContext),
+    ).rejects.toThrow("redaction unavailable");
 
     const session = db
       .query<{ session_id: string }, [string]>(

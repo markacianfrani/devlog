@@ -4,6 +4,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { loadConfig } from "./config.ts";
 import {
   countUserMessages,
   iterateOpencodeDbSessions,
@@ -21,36 +22,6 @@ import {
   type CliOptions,
   type SourceSummary,
 } from "./progress.ts";
-
-interface Config {
-  archiveDir?: string;
-  excludeProjects?: string[];
-}
-
-const CONFIG_PATH = path.join(os.homedir(), ".config", "devlog", "config.json");
-
-function loadConfig(): Required<Config> {
-  const defaults = {
-    archiveDir: path.join(os.homedir(), ".config", "devlog"),
-    excludeProjects: [] as string[],
-  };
-
-  if (!fs.existsSync(CONFIG_PATH)) {
-    return defaults;
-  }
-
-  try {
-    const content = fs.readFileSync(CONFIG_PATH, "utf-8");
-    const config: Config = JSON.parse(content);
-
-    return {
-      archiveDir: config.archiveDir ?? defaults.archiveDir,
-      excludeProjects: config.excludeProjects ?? defaults.excludeProjects,
-    };
-  } catch {
-    return defaults;
-  }
-}
 
 const config = loadConfig();
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
@@ -858,10 +829,11 @@ async function archiveMain(options: CliOptions = DEFAULT_CLI_OPTIONS) {
 }
 
 async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_CLI_OPTIONS) {
-  const { getDb, resetDb, DEFAULT_DB_PATH } = await import("./db.ts");
+  const { getDb, resetDb } = await import("./db.ts");
   const { indexAll } = await import("./indexer.ts");
   const startedAt = Date.now();
   const progress = new ProgressReporter(options);
+  const dbPath = config.dbPath;
 
   if (options.verbose) {
     console.log(
@@ -870,10 +842,10 @@ async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_CLI_OPT
   }
 
   if (rebuild) {
-    resetDb(DEFAULT_DB_PATH);
+    resetDb(dbPath);
   }
 
-  const db = getDb(DEFAULT_DB_PATH);
+  const db = getDb(dbPath);
   const stats = await indexAll(ARCHIVE_DIR, rebuild, db, {
     onStart(total) {
       progress.start("index", total);
@@ -894,7 +866,7 @@ async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_CLI_OPT
   });
   progress.end();
 
-  printIndexSummary(stats, DEFAULT_DB_PATH, Date.now() - startedAt);
+  printIndexSummary(stats, dbPath, Date.now() - startedAt);
 }
 
 export {

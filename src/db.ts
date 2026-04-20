@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { DEFAULTS } from "./config.ts";
 import type { ContentBlockType, MessageRole, Source } from "./parsers/types.ts";
 
 // Row types for database queries
@@ -64,7 +64,7 @@ export interface PrLinkRow {
 }
 
 const SCHEMA_VERSION = 7;
-const DEFAULT_DB_PATH = path.join(os.homedir(), ".local", "state", "devlog", "index.db");
+const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;
 

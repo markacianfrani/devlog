@@ -1,12 +1,10 @@
 import type {
-  AssistantMessage,
   CleanMessage,
   ContentBlock,
   ParseResult,
   PrLink,
   SessionMeta,
   UserContentBlock,
-  UserMessage,
 } from "./parsers/types.ts";
 
 interface SecretPattern {
@@ -52,6 +50,14 @@ const SECRET_PATTERNS: SecretPattern[] = [
   { regex: /AIza[A-Za-z0-9_-]{30,}/g, replacement: "[REDACTED:google-ai-key]" },
   { regex: /csk-[A-Za-z0-9_-]{20,}/g, replacement: "[REDACTED:cerebras-key]" },
   { regex: /(?:AKIA|ASIA)[0-9A-Z]{16}/g, replacement: "[REDACTED:aws-key]" },
+  { regex: /\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{20,}/g, replacement: "[REDACTED:stripe-key]" },
+  { regex: /\bwhsec_[A-Za-z0-9]{20,}/g, replacement: "[REDACTED:stripe-webhook-secret]" },
+  { regex: /\b(?:xox[a-z]|xapp)-[A-Za-z0-9-]{10,}/g, replacement: "[REDACTED:slack-token]" },
+  { regex: /\bnpm_[A-Za-z0-9]{30,}/g, replacement: "[REDACTED:npm-token]" },
+  {
+    regex: /\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?):\/\/[^:@\s/]+):[^@\s/]+@/gi,
+    replacement: "$1:[REDACTED]@",
+  },
   {
     regex: /-----BEGIN [\w ]+ KEY-----[\s\S]+?-----END [\w ]+ KEY-----/g,
     replacement: "[REDACTED:private-key]",
@@ -198,11 +204,6 @@ function redactUserContentBlock(
   }
 }
 
-function redactMessage(message: UserMessage, literalSecrets: NormalizedLiteralSecrets): UserMessage;
-function redactMessage(
-  message: AssistantMessage,
-  literalSecrets: NormalizedLiteralSecrets,
-): AssistantMessage;
 function redactMessage(
   message: CleanMessage,
   literalSecrets: NormalizedLiteralSecrets,
@@ -250,12 +251,7 @@ export function redactForIndexing(
   return {
     ...result,
     meta: redactMeta(result.meta, literalSecrets),
-    messages: result.messages.map((message) => {
-      if (message.role === "assistant") {
-        return redactMessage(message, literalSecrets);
-      }
-      return redactMessage(message, literalSecrets);
-    }),
+    messages: result.messages.map((message) => redactMessage(message, literalSecrets)),
     prLinks: result.prLinks.map((link) => redactPrLink(link, literalSecrets)),
     redacted: true,
   };

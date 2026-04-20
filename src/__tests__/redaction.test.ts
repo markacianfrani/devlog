@@ -116,4 +116,93 @@ describe("redaction", () => {
     expect(thinking.thinking).toBe("considering [REDACTED:huggingface-token]");
     expect(thinking.thinking).not.toContain("hf_abcdefghijklmnopqrstuvwxyz12");
   });
+
+  const patternCases: Array<{ label: string; secret: string; marker: string }> = [
+    {
+      label: "AWS access key",
+      secret: "AKIAIOSFODNN7EXAMPLE",
+      marker: "[REDACTED:aws-key]",
+    },
+    {
+      label: "AWS STS session key",
+      secret: "ASIAIOSFODNN7EXAMPLE",
+      marker: "[REDACTED:aws-key]",
+    },
+    {
+      label: "Stripe live secret key",
+      secret: ["sk", "live", "abcdefghijklmnopqrstuvwx"].join("_"),
+      marker: "[REDACTED:stripe-key]",
+    },
+    {
+      label: "Stripe test restricted key",
+      secret: ["rk", "test", "abcdefghijklmnopqrstuvwx"].join("_"),
+      marker: "[REDACTED:stripe-key]",
+    },
+    {
+      label: "Stripe webhook secret",
+      secret: ["whsec", "abcdefghijklmnopqrstuvwx"].join("_"),
+      marker: "[REDACTED:stripe-webhook-secret]",
+    },
+    {
+      label: "Slack bot token",
+      secret: ["xoxb", "1234567890", "1234567890", "ABCDEFGHIJKLMN"].join("-"),
+      marker: "[REDACTED:slack-token]",
+    },
+    {
+      label: "Slack app token",
+      secret: ["xapp", "1", "A01B2C3D4E5", "12345", "abcdefghij"].join("-"),
+      marker: "[REDACTED:slack-token]",
+    },
+    {
+      label: "npm access token",
+      secret: "npm_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+      marker: "[REDACTED:npm-token]",
+    },
+    {
+      label: "Basic auth header",
+      secret: "Basic QWxhZGRpbjpPcGVuU2VzYW1lMTIz",
+      marker: "Basic [REDACTED]",
+    },
+  ];
+
+  for (const { label, secret, marker } of patternCases) {
+    test(`redacts ${label}`, () => {
+      const original = makeParseResult(secret);
+      const redacted = redactParseResult(original);
+      const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
+
+      expect(redactedText).toContain(marker);
+      expect(redactedText).not.toContain(secret);
+    });
+  }
+
+  test("redacts private key blocks across newlines", () => {
+    const privateKey =
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA1234567890abcdef\nfakekeybodyfakekeybodyfakekeybody\n-----END RSA PRIVATE KEY-----";
+    const original = makeParseResult(privateKey);
+    const redacted = redactParseResult(original);
+    const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
+
+    expect(redactedText).toBe("[REDACTED:private-key]");
+    expect(redactedText).not.toContain("fakekeybody");
+  });
+
+  test("redacts only the password portion of a database URL", () => {
+    const dbUrl = "postgres://appuser:supersecretpass@db.internal:5432/app";
+    const original = makeParseResult(dbUrl);
+    const redacted = redactParseResult(original);
+    const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
+
+    expect(redactedText).toBe("postgres://appuser:[REDACTED]@db.internal:5432/app");
+    expect(redactedText).not.toContain("supersecretpass");
+  });
+
+  test("generic fallback redacts key=value style credentials", () => {
+    const original = makeParseResult('config = { password: "hunter2hunter2hunter2" }');
+    const redacted = redactParseResult(original);
+    const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
+
+    expect(redactedText).toContain("[REDACTED]");
+    expect(redactedText).not.toContain("hunter2hunter2hunter2");
+  });
 });

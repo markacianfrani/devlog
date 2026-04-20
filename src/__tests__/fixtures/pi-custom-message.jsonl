@@ -1,0 +1,5 @@
+{"type":"session","version":3,"id":"pi-custom-1","timestamp":"2026-03-15T20:09:38.000Z","cwd":"/home/user/project"}
+{"type":"message","id":"u0000001","parentId":null,"timestamp":"2026-03-15T20:10:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Spawn a subagent"}]}}
+{"type":"custom_message","id":"c0000001","parentId":"u0000001","timestamp":"2026-03-15T20:10:05.000Z","customType":"subagent-slash-result","content":"Subagent finished: here is the synthesized finding.","display":"Subagent result"}
+{"type":"thinking_level_change","id":"t0000001","parentId":"c0000001","timestamp":"2026-03-15T20:10:06.000Z","thinkingLevel":"high"}
+{"type":"message","id":"a0000001","parentId":"t0000001","timestamp":"2026-03-15T20:10:10.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Synthesis complete."}],"model":"gpt-5.4"}}

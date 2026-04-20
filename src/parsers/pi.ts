@@ -69,7 +69,19 @@ interface PiGenericEntry {
   name?: string;
   cwd?: string;
   parentSession?: string;
+  customType?: string;
+  content?: unknown;
 }
+
+const SKIP_TYPES = new Set(["thinking_level_change"]);
+const KNOWN_TYPES = new Set([
+  "session",
+  "message",
+  "model_change",
+  "session_info",
+  "custom_message",
+  ...SKIP_TYPES,
+]);
 
 interface SessionState {
   sessionId?: string;
@@ -289,6 +301,29 @@ function hasPiUsage(entry: PiGenericEntry): boolean {
   return (entry.message?.usage?.input ?? 0) > 0 || (entry.message?.usage?.output ?? 0) > 0;
 }
 
+function buildCustomMessage(
+  entry: PiGenericEntry,
+  sessionId: string | undefined,
+): CleanMessage | undefined {
+  const body = typeof entry.content === "string" ? entry.content : "";
+  if (!body && !entry.customType) {
+    return undefined;
+  }
+
+  const customType = entry.customType ?? "unknown";
+  const wrapped = `<pi:custom-message customType="${customType}">${body}</pi:custom-message>`;
+
+  return createUserMessage(
+    {
+      id: entry.id,
+      sessionId,
+      timestamp: entry.timestamp,
+      ...(entry.parentId && { parentId: entry.parentId }),
+    },
+    [{ type: "text", text: wrapped }],
+  );
+}
+
 function parsePiEntry(
   line: string,
   state: SessionState,
@@ -308,7 +343,18 @@ function parsePiEntry(
     return { malformed: false };
   }
 
+  if (entry.type && SKIP_TYPES.has(entry.type)) {
+    return { malformed: false };
+  }
+
+  if (entry.type === "custom_message") {
+    return { malformed: false, message: buildCustomMessage(entry, state.sessionId) };
+  }
+
   if (!isPiMessageEntry(entry) || !isPiMessageRole(entry.message?.role)) {
+    if (entry.type && !KNOWN_TYPES.has(entry.type)) {
+      warnUnknownType(entry.type, "record", "pi-parser");
+    }
     return { malformed: false };
   }
 

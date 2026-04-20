@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   isObjectRecord,
   parseContent,
@@ -72,6 +73,20 @@ interface SessionState {
 
 function isClaudeRecord(value: unknown): value is ClaudeRecord {
   return isObjectRecord(value) && typeof value["type"] === "string";
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Claude Code subagent transcripts live at <parent-uuid>/subagents/<agent>.jsonl.
+// Archive preserves that layout, so we can recover parent linkage from the path.
+function extractParentSessionIdFromPath(jsonlPath: string): string | undefined {
+  const parts = jsonlPath.split(path.sep);
+  const subagentsIndex = parts.lastIndexOf("subagents");
+  if (subagentsIndex < 1) {
+    return undefined;
+  }
+  const candidate = parts[subagentsIndex - 1];
+  return UUID_PATTERN.test(candidate) ? candidate : undefined;
 }
 
 function parseClaudeJsonLine(line: string): ClaudeRecord | undefined {
@@ -233,6 +248,7 @@ export async function parseClaudeSession(
       model: state.model,
       createdAt: state.createdAt,
       updatedAt: state.updatedAt,
+      parentSessionId: extractParentSessionIdFromPath(jsonlPath),
     },
     messages,
     prLinks: [...prLinkMap.values()],

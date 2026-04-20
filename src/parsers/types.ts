@@ -9,7 +9,9 @@ export const CONTENT_BLOCK_TYPES = [
   "tool_use",
   "tool_result",
   "thinking",
+  "redacted_thinking",
   "image",
+  "document",
 ] as const;
 export type ContentBlockType = (typeof CONTENT_BLOCK_TYPES)[number];
 
@@ -34,19 +36,34 @@ export interface ThinkingContentBlock {
   thinking: string;
 }
 
+export interface RedactedThinkingContentBlock {
+  type: "redacted_thinking";
+}
+
 export interface ImageContentBlock {
   type: "image";
   mediaType?: string;
 }
 
-export type UserContentBlock = TextContentBlock | ToolResultContentBlock | ImageContentBlock;
+export interface DocumentContentBlock {
+  type: "document";
+  mediaType?: string;
+}
+
+export type UserContentBlock =
+  | TextContentBlock
+  | ToolResultContentBlock
+  | ImageContentBlock
+  | DocumentContentBlock;
 
 export type ContentBlock =
   | TextContentBlock
   | ToolUseContentBlock
   | ToolResultContentBlock
   | ThinkingContentBlock
-  | ImageContentBlock;
+  | RedactedThinkingContentBlock
+  | ImageContentBlock
+  | DocumentContentBlock;
 
 interface BaseMessage {
   id: string;
@@ -145,7 +162,12 @@ function isNonEmptyString(value: string | undefined): value is string {
 }
 
 export function isUserContentBlock(block: ContentBlock): block is UserContentBlock {
-  return block.type === "text" || block.type === "tool_result" || block.type === "image";
+  return (
+    block.type === "text" ||
+    block.type === "tool_result" ||
+    block.type === "image" ||
+    block.type === "document"
+  );
 }
 
 function createBaseMessage(draft: MessageDraft): BaseMessage | undefined {

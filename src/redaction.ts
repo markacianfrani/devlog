@@ -181,7 +181,9 @@ function redactContentBlock(
       const redactedOutput = redactText(block.toolOutput, literalSecrets);
       return redactedOutput === block.toolOutput ? block : { ...block, toolOutput: redactedOutput };
     }
+    case "redacted_thinking":
     case "image":
+    case "document":
       return block;
   }
 }
@@ -200,6 +202,7 @@ function redactUserContentBlock(
       return redactedOutput === block.toolOutput ? block : { ...block, toolOutput: redactedOutput };
     }
     case "image":
+    case "document":
       return block;
   }
 }

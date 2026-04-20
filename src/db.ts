@@ -63,7 +63,7 @@ export interface PrLinkRow {
   timestamp: string | null;
 }
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS content_blocks (
 	file_path TEXT NOT NULL,
 	message_id TEXT NOT NULL,
 	block_index INTEGER NOT NULL,
-	type TEXT NOT NULL CHECK(type IN ('text', 'tool_use', 'tool_result', 'thinking', 'image')),
+	type TEXT NOT NULL CHECK(type IN ('text', 'tool_use', 'tool_result', 'thinking', 'redacted_thinking', 'image', 'document')),
 	text TEXT,
 	tool_name TEXT,
 	tool_input TEXT,

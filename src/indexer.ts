@@ -153,6 +153,8 @@ function insertMessages(db: Database, result: ParseResult, filePath: string) {
         case "thinking":
           text = block.thinking;
           break;
+        case "redacted_thinking":
+          break;
         case "tool_use":
           toolName = block.toolName ?? SQL_NULL;
           toolInput = block.toolInput ?? SQL_NULL;
@@ -161,6 +163,7 @@ function insertMessages(db: Database, result: ParseResult, filePath: string) {
           toolOutput = block.toolOutput ?? SQL_NULL;
           break;
         case "image":
+        case "document":
           mediaType = block.mediaType ?? SQL_NULL;
           break;
       }

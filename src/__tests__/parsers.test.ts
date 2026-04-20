@@ -229,6 +229,72 @@ describe("Claude parser", () => {
     expect(result.prLinks).toEqual([]);
   });
 
+  test("populates parentSessionId from subagent archive path", async () => {
+    const parentUuid = "a1b2c3d4-5678-4abc-9def-0123456789ab";
+    const subagentPath = path.join(
+      FIXTURES_DIR,
+      "..",
+      "synthetic-archive",
+      "claude",
+      parentUuid,
+      "subagents",
+      "agent-abc.jsonl",
+    );
+
+    const fs = await import("node:fs");
+    fs.mkdirSync(path.dirname(subagentPath), { recursive: true });
+    fs.copyFileSync(path.join(FIXTURES_DIR, "claude-agent.jsonl"), subagentPath);
+
+    try {
+      const result = expectParsed(await parseClaudeSession(subagentPath, "test-project"));
+      expect(result.meta.parentSessionId).toBe(parentUuid);
+    } finally {
+      fs.rmSync(path.join(FIXTURES_DIR, "..", "synthetic-archive"), {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  test("does not set parentSessionId for non-subagent sessions", async () => {
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-simple.jsonl"), "test-project"),
+    );
+    expect(result.meta.parentSessionId).toBeUndefined();
+  });
+
+  test("preserves redacted thinking blocks (empty thinking string)", async () => {
+    const result = expectParsed(
+      await parseClaudeSession(
+        path.join(FIXTURES_DIR, "claude-redacted-thinking.jsonl"),
+        "test-project",
+      ),
+    );
+
+    expect(result.messages).toHaveLength(3);
+    const firstAsst = result.messages[1];
+    expect(firstAsst.content).toHaveLength(2);
+    expect(firstAsst.content[0].type).toBe("redacted_thinking");
+    expect(firstAsst.content[1].type).toBe("text");
+
+    const secondAsst = result.messages[2];
+    expect(secondAsst.content[0].type).toBe("redacted_thinking");
+    expect(secondAsst.content[1].type).toBe("text");
+  });
+
+  test("preserves document content blocks with mediaType", async () => {
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-document.jsonl"), "test-project"),
+    );
+
+    const userMsg = result.messages[0];
+    expect(userMsg.content).toHaveLength(2);
+    expect(userMsg.content[0].type).toBe("text");
+    expect(userMsg.content[1].type).toBe("document");
+    const doc = userMsg.content[1] as { type: "document"; mediaType?: string };
+    expect(doc.mediaType).toBe("application/pdf");
+  });
+
   test("deduplicates messages with the same uuid, keeping the last", async () => {
     const result = expectParsed(
       await parseClaudeSession(
@@ -347,6 +413,52 @@ describe("Pi parser", () => {
     expect(toolResult.content).toHaveLength(1);
     expect(toolResult.content[0].type).toBe("tool_result");
     expect((toolResult.content[0] as ToolResultContentBlock).toolOutput).toContain("auth");
+  });
+
+  test("surfaces pi custom_message entries as user messages with wrapping", async () => {
+    const result = expectParsed(
+      await parsePiSession(path.join(FIXTURES_DIR, "pi-custom-message.jsonl"), "test-project"),
+    );
+
+    const customMsg = result.messages.find((m) =>
+      m.content.some(
+        (b) => b.type === "text" && (b as TextContentBlock).text.includes("custom-message"),
+      ),
+    );
+    if (!customMsg) {
+      throw new Error("Expected a custom_message to be surfaced");
+    }
+    expect(customMsg.role).toBe("user");
+
+    const text = (customMsg.content[0] as TextContentBlock).text;
+    expect(text).toContain('customType="subagent-slash-result"');
+    expect(text).toContain("Subagent finished: here is the synthesized finding.");
+  });
+
+  test("silently skips pi thinking_level_change records", async () => {
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    };
+
+    try {
+      const result = expectParsed(
+        await parsePiSession(path.join(FIXTURES_DIR, "pi-custom-message.jsonl"), "test-project"),
+      );
+
+      expect(
+        warnings.some((w) => w.includes("thinking_level_change") && w.includes("Unknown")),
+      ).toBe(false);
+
+      expect(
+        result.messages.some((m) =>
+          m.content.some((b) => b.type === "text" && (b as TextContentBlock).text.includes("high")),
+        ),
+      ).toBe(false);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   test("keeps Pi parsing separate from redaction transform", async () => {

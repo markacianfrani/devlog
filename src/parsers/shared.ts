@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import type {
   ContentBlock,
+  DocumentContentBlock,
   ImageContentBlock,
+  RedactedThinkingContentBlock,
   TextContentBlock,
   ThinkingContentBlock,
   ToolResultContentBlock,
@@ -110,11 +112,18 @@ export function parseContentBlock(
     } satisfies ToolResultContentBlock;
   }
 
-  if (block.type === "thinking" && block.thinking) {
-    return {
-      type: "thinking",
-      thinking: block.thinking,
-    } satisfies ThinkingContentBlock;
+  if (block.type === "thinking") {
+    if (block.thinking) {
+      return {
+        type: "thinking",
+        thinking: block.thinking,
+      } satisfies ThinkingContentBlock;
+    }
+    return { type: "redacted_thinking" } satisfies RedactedThinkingContentBlock;
+  }
+
+  if (block.type === "redacted_thinking") {
+    return { type: "redacted_thinking" } satisfies RedactedThinkingContentBlock;
   }
 
   if (block.type === "image") {
@@ -122,6 +131,13 @@ export function parseContentBlock(
       type: "image",
       mediaType: block.source?.media_type,
     } satisfies ImageContentBlock;
+  }
+
+  if (block.type === "document") {
+    return {
+      type: "document",
+      mediaType: block.source?.media_type,
+    } satisfies DocumentContentBlock;
   }
 
   if (!KNOWN_CONTENT_TYPES.has(block.type) && !skipTypes?.has(block.type)) {

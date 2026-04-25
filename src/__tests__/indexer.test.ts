@@ -109,22 +109,24 @@ describe("indexer", () => {
     );
 
     const toolBlocks = db
-      .query<{ type: string; tool_name: string | null }, []>(
-        "SELECT type, tool_name FROM content_blocks WHERE type = 'tool_use'",
+      .query<{ type: string; tool_name: string | null; tool_use_id: string | null }, []>(
+        "SELECT type, tool_name, tool_use_id FROM content_blocks WHERE type = 'tool_use'",
       )
       .all();
 
     expect(toolBlocks).toHaveLength(1);
     expect(toolBlocks[0].tool_name).toBe("Read");
+    expect(toolBlocks[0].tool_use_id).toBe("tool-1");
 
     const resultBlocks = db
-      .query<{ type: string; tool_output: string | null }, []>(
-        "SELECT type, tool_output FROM content_blocks WHERE type = 'tool_result'",
+      .query<{ type: string; tool_output: string | null; tool_use_id: string | null }, []>(
+        "SELECT type, tool_output, tool_use_id FROM content_blocks WHERE type = 'tool_result'",
       )
       .all();
 
     expect(resultBlocks).toHaveLength(1);
     expect(resultBlocks[0].tool_output).toContain("my-project");
+    expect(resultBlocks[0].tool_use_id).toBe("tool-1");
   });
 
   test("redacts content before writing to SQLite", async () => {

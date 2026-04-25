@@ -93,12 +93,14 @@ describe("Claude parser", () => {
     expect(toolUseMsg.content[0].type).toBe("tool_use");
     expect((toolUseMsg.content[0] as ToolUseContentBlock).toolName).toBe("Read");
     expect((toolUseMsg.content[0] as ToolUseContentBlock).toolInput).toContain("package.json");
+    expect((toolUseMsg.content[0] as ToolUseContentBlock).toolUseId).toBe("tool-1");
 
     const toolResultMsg = result.messages[2];
     expect(toolResultMsg.role).toBe("user");
     expect(toolResultMsg.content).toHaveLength(1);
     expect(toolResultMsg.content[0].type).toBe("tool_result");
     expect((toolResultMsg.content[0] as ToolResultContentBlock).toolOutput).toContain("my-project");
+    expect((toolResultMsg.content[0] as ToolResultContentBlock).toolUseId).toBe("tool-1");
   });
 
   test("keeps parsing separate from redaction transform", async () => {
@@ -343,8 +345,10 @@ describe("OpenCode parser", () => {
     expect(toolMsg.content).toHaveLength(2);
     expect(toolMsg.content[0].type).toBe("tool_use");
     expect((toolMsg.content[0] as ToolUseContentBlock).toolName).toBe("bash");
+    expect((toolMsg.content[0] as ToolUseContentBlock).toolUseId).toBe("tool-1");
     expect(toolMsg.content[1].type).toBe("tool_result");
     expect((toolMsg.content[1] as ToolResultContentBlock).toolOutput).toContain("file1.txt");
+    expect((toolMsg.content[1] as ToolResultContentBlock).toolUseId).toBe("tool-1");
   });
 
   test("extracts title from first user message", async () => {
@@ -407,12 +411,14 @@ describe("Pi parser", () => {
     expect(assistant.content[0].type).toBe("text");
     expect(assistant.content[1].type).toBe("tool_use");
     expect((assistant.content[1] as ToolUseContentBlock).toolName).toBe("read");
+    expect((assistant.content[1] as ToolUseContentBlock).toolUseId).toBe("call_1");
 
     const toolResult = result.messages[2];
     expect(toolResult.role).toBe("user");
     expect(toolResult.content).toHaveLength(1);
     expect(toolResult.content[0].type).toBe("tool_result");
     expect((toolResult.content[0] as ToolResultContentBlock).toolOutput).toContain("auth");
+    expect((toolResult.content[0] as ToolResultContentBlock).toolUseId).toBe("call_1");
   });
 
   test("surfaces pi custom_message entries as user messages with wrapping", async () => {

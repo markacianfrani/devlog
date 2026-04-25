@@ -146,6 +146,7 @@ function parsePiContent(
         type: "tool_use",
         toolName: block.name,
         toolInput: block.arguments ? JSON.stringify(block.arguments) : undefined,
+        ...(block.id && { toolUseId: block.id }),
       });
       continue;
     }
@@ -169,13 +170,16 @@ function parsePiContent(
 
 function buildPiToolResultContent(
   content: string | PiRawContentBlock[] | undefined,
+  toolUseId: string | undefined,
 ): UserContentBlock[] {
+  const idFields = toolUseId ? { toolUseId } : {};
+
   if (!content) {
     return [];
   }
 
   if (typeof content === "string") {
-    return [{ type: "tool_result", toolOutput: content }];
+    return [{ type: "tool_result", toolOutput: content, ...idFields }];
   }
 
   const textParts: string[] = [];
@@ -193,7 +197,7 @@ function buildPiToolResultContent(
 
   const blocks: UserContentBlock[] = [];
   if (textParts.length > 0) {
-    blocks.push({ type: "tool_result", toolOutput: textParts.join("\n") });
+    blocks.push({ type: "tool_result", toolOutput: textParts.join("\n"), ...idFields });
   }
   blocks.push(...images);
   return blocks;
@@ -293,7 +297,7 @@ function buildPiMessage(
 
 function parsePiMessageContent(entry: PiGenericEntry, role: "user" | "assistant" | "toolResult") {
   return role === "toolResult"
-    ? buildPiToolResultContent(entry.message?.content)
+    ? buildPiToolResultContent(entry.message?.content, entry.message?.toolCallId)
     : parsePiContent(entry.message?.content, "pi-parser");
 }
 

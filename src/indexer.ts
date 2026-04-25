@@ -112,8 +112,8 @@ function insertMessages(db: Database, result: ParseResult, filePath: string) {
   );
 
   const insertBlock = db.prepare(
-    `INSERT INTO content_blocks (file_path, message_id, block_index, type, text, tool_name, tool_input, tool_output, media_type)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO content_blocks (file_path, message_id, block_index, type, text, tool_name, tool_input, tool_output, tool_use_id, media_type)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   const insertFts = db.prepare(
@@ -143,6 +143,7 @@ function insertMessages(db: Database, result: ParseResult, filePath: string) {
       let toolName: string | null = SQL_NULL;
       let toolInput: string | null = SQL_NULL;
       let toolOutput: string | null = SQL_NULL;
+      let toolUseId: string | null = SQL_NULL;
       let mediaType: string | null = SQL_NULL;
 
       switch (block.type) {
@@ -158,9 +159,11 @@ function insertMessages(db: Database, result: ParseResult, filePath: string) {
         case "tool_use":
           toolName = block.toolName ?? SQL_NULL;
           toolInput = block.toolInput ?? SQL_NULL;
+          toolUseId = block.toolUseId ?? SQL_NULL;
           break;
         case "tool_result":
           toolOutput = block.toolOutput ?? SQL_NULL;
+          toolUseId = block.toolUseId ?? SQL_NULL;
           break;
         case "image":
         case "document":
@@ -177,6 +180,7 @@ function insertMessages(db: Database, result: ParseResult, filePath: string) {
         toolName,
         toolInput,
         toolOutput,
+        toolUseId,
         mediaType,
       );
     }

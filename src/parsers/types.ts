@@ -24,11 +24,13 @@ export interface ToolUseContentBlock {
   type: "tool_use";
   toolName: string;
   toolInput?: string;
+  toolUseId?: string;
 }
 
 export interface ToolResultContentBlock {
   type: "tool_result";
   toolOutput: string;
+  toolUseId?: string;
 }
 
 export interface ThinkingContentBlock {

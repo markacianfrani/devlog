@@ -44,6 +44,7 @@ export interface ContentBlockRow {
   tool_name: string | null;
   tool_input: string | null;
   tool_output: string | null;
+  tool_use_id: string | null;
   media_type: string | null;
 }
 
@@ -63,7 +64,7 @@ export interface PrLinkRow {
   timestamp: string | null;
 }
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;
@@ -125,6 +126,7 @@ CREATE TABLE IF NOT EXISTS content_blocks (
 	tool_name TEXT,
 	tool_input TEXT,
 	tool_output TEXT,
+	tool_use_id TEXT,
 	media_type TEXT,
 	FOREIGN KEY (file_path, message_id) REFERENCES messages(file_path, id) ON DELETE CASCADE
 );
@@ -132,6 +134,7 @@ CREATE TABLE IF NOT EXISTS content_blocks (
 CREATE INDEX IF NOT EXISTS idx_content_blocks_file_path ON content_blocks(file_path);
 CREATE INDEX IF NOT EXISTS idx_content_blocks_message ON content_blocks(file_path, message_id);
 CREATE INDEX IF NOT EXISTS idx_content_blocks_tool_name ON content_blocks(tool_name);
+CREATE INDEX IF NOT EXISTS idx_content_blocks_tool_use_id ON content_blocks(file_path, tool_use_id);
 
 -- PR links table (normalized — most sessions have none, some have multiple)
 CREATE TABLE IF NOT EXISTS pr_links (

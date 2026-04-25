@@ -94,6 +94,7 @@ export function parseContentBlock(
       type: "tool_use",
       toolName: block.name,
       toolInput: stringifyJson(block.input),
+      ...(block.id && { toolUseId: block.id }),
     } satisfies ToolUseContentBlock;
   }
 
@@ -109,6 +110,7 @@ export function parseContentBlock(
     return {
       type: "tool_result",
       toolOutput: raw,
+      ...(block.tool_use_id && { toolUseId: block.tool_use_id }),
     } satisfies ToolResultContentBlock;
   }
 

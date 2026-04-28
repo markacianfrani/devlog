@@ -64,7 +64,7 @@ export interface PrLinkRow {
   timestamp: string | null;
 }
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;
@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS content_blocks (
 
 CREATE INDEX IF NOT EXISTS idx_content_blocks_file_path ON content_blocks(file_path);
 CREATE INDEX IF NOT EXISTS idx_content_blocks_message ON content_blocks(file_path, message_id);
+CREATE INDEX IF NOT EXISTS idx_content_blocks_message_id ON content_blocks(message_id);
 CREATE INDEX IF NOT EXISTS idx_content_blocks_tool_name ON content_blocks(tool_name);
 CREATE INDEX IF NOT EXISTS idx_content_blocks_tool_use_id ON content_blocks(file_path, tool_use_id);
 

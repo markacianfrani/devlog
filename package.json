@@ -1,6 +1,6 @@
 {
   "name": "@cianfrani/devlog",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Archive AI assistant conversations (Claude Code, opencode, pi)",
   "keywords": [
     "ai",

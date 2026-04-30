@@ -531,8 +531,129 @@ describe("Pi parser", () => {
 });
 
 describe("shared parser helpers", () => {
+  test("parses text blocks", () => {
+    expect(parseContentBlock({ type: "text", text: "hi" }, "test-parser")).toEqual({
+      type: "text",
+      text: "hi",
+    });
+  });
+
+  test("parses tool_use blocks", () => {
+    expect(
+      parseContentBlock(
+        { type: "tool_use", id: "tool-1", name: "Read", input: { file_path: "README.md" } },
+        "test-parser",
+      ),
+    ).toEqual({
+      type: "tool_use",
+      toolName: "Read",
+      toolInput: '{"file_path":"README.md"}',
+      toolUseId: "tool-1",
+    });
+  });
+
+  test("skips tool_use blocks that are missing name", () => {
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((arg) => String(arg)).join(" "));
+    };
+
+    try {
+      const parsed = parseContentBlock({ type: "tool_use" }, "test-parser");
+      expect(parsed).toBeUndefined();
+      expect(warnings).toEqual(["[test-parser] tool_use block missing name"]);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("parses tool_result object content", () => {
+    expect(
+      parseContentBlock(
+        { type: "tool_result", tool_use_id: "tool-1", content: { ok: true } },
+        "test-parser",
+      ),
+    ).toEqual({
+      type: "tool_result",
+      toolOutput: '{"ok":true}',
+      toolUseId: "tool-1",
+    });
+  });
+
   test("skips tool_result blocks that are missing content", () => {
-    const parsed = parseContentBlock({ type: "tool_result" }, "test-parser");
-    expect(parsed).toBeUndefined();
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((arg) => String(arg)).join(" "));
+    };
+
+    try {
+      const parsed = parseContentBlock({ type: "tool_result" }, "test-parser");
+      expect(parsed).toBeUndefined();
+      expect(warnings).toEqual(["[test-parser] tool_result block missing content"]);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("treats empty thinking blocks as redacted thinking", () => {
+    expect(parseContentBlock({ type: "thinking", thinking: "" }, "test-parser")).toEqual({
+      type: "redacted_thinking",
+    });
+  });
+
+  test("parses image blocks with media type", () => {
+    expect(
+      parseContentBlock(
+        { type: "image", source: { type: "base64", media_type: "image/png" } },
+        "test-parser",
+      ),
+    ).toEqual({
+      type: "image",
+      mediaType: "image/png",
+    });
+  });
+
+  test("warns once for unknown content block types", () => {
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((arg) => String(arg)).join(" "));
+    };
+
+    try {
+      expect(
+        parseContentBlock({ type: "shared-test-unknown-block" }, "test-parser"),
+      ).toBeUndefined();
+      expect(
+        parseContentBlock({ type: "shared-test-unknown-block" }, "test-parser"),
+      ).toBeUndefined();
+      expect(warnings).toEqual([
+        '[test-parser] Unknown content block type: "shared-test-unknown-block"',
+      ]);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("skips configured content block types without warning", () => {
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((arg) => String(arg)).join(" "));
+    };
+
+    try {
+      const parsed = parseContentBlock(
+        { type: "shared-test-skipped-block" },
+        "test-parser",
+        new Set(["shared-test-skipped-block"]),
+      );
+      expect(parsed).toBeUndefined();
+      expect(warnings).toEqual([]);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 });

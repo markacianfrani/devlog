@@ -40,6 +40,8 @@ After setup, run:
 devlog init
 ```
 
+For local development from a checkout, run `bun install`, then `bun run build:cli` and invoke `./dist/cli.js` directly.
+
 `devlog init` asks where to store your archive (default: `~/devlog`) and which agents to configure the MCP server for.
 
 ## Commands

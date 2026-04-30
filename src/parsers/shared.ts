@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import type {
   ContentBlock,
+  ContentBlockType,
   DocumentContentBlock,
   ImageContentBlock,
   RedactedThinkingContentBlock,
@@ -71,6 +72,92 @@ function stringifyJson(value: unknown): string | undefined {
   return JSON.stringify(value);
 }
 
+type ContentBlockParser = (block: RawContentBlock, parserName: string) => ContentBlock | undefined;
+
+function isKnownContentBlockType(type: string): type is ContentBlockType {
+  return KNOWN_CONTENT_TYPES.has(type);
+}
+
+function parseTextBlock(block: RawContentBlock): TextContentBlock | undefined {
+  return block.text ? { type: "text", text: block.text } : undefined;
+}
+
+function parseToolUseBlock(
+  block: RawContentBlock,
+  parserName: string,
+): ToolUseContentBlock | undefined {
+  if (!block.name) {
+    console.warn(`[${parserName}] tool_use block missing name`);
+    return undefined;
+  }
+
+  return {
+    type: "tool_use",
+    toolName: block.name,
+    toolInput: stringifyJson(block.input),
+    ...(block.id && { toolUseId: block.id }),
+  } satisfies ToolUseContentBlock;
+}
+
+function parseToolResultBlock(
+  block: RawContentBlock,
+  parserName: string,
+): ToolResultContentBlock | undefined {
+  const output = block.content;
+  const raw = typeof output === "string" ? output : stringifyJson(output);
+
+  if (raw === undefined) {
+    console.warn(`[${parserName}] tool_result block missing content`);
+    return undefined;
+  }
+
+  return {
+    type: "tool_result",
+    toolOutput: raw,
+    ...(block.tool_use_id && { toolUseId: block.tool_use_id }),
+  } satisfies ToolResultContentBlock;
+}
+
+function parseThinkingBlock(
+  block: RawContentBlock,
+): ThinkingContentBlock | RedactedThinkingContentBlock {
+  if (block.thinking) {
+    return {
+      type: "thinking",
+      thinking: block.thinking,
+    } satisfies ThinkingContentBlock;
+  }
+  return { type: "redacted_thinking" } satisfies RedactedThinkingContentBlock;
+}
+
+function parseRedactedThinkingBlock(): RedactedThinkingContentBlock {
+  return { type: "redacted_thinking" };
+}
+
+function parseImageBlock(block: RawContentBlock): ImageContentBlock {
+  return {
+    type: "image",
+    mediaType: block.source?.media_type,
+  };
+}
+
+function parseDocumentBlock(block: RawContentBlock): DocumentContentBlock {
+  return {
+    type: "document",
+    mediaType: block.source?.media_type,
+  };
+}
+
+const CONTENT_BLOCK_PARSERS = {
+  text: parseTextBlock,
+  tool_use: parseToolUseBlock,
+  tool_result: parseToolResultBlock,
+  thinking: parseThinkingBlock,
+  redacted_thinking: parseRedactedThinkingBlock,
+  image: parseImageBlock,
+  document: parseDocumentBlock,
+} satisfies Record<ContentBlockType, ContentBlockParser>;
+
 export function parseContentBlock(
   block: RawContentBlock,
   parserName: string,
@@ -80,72 +167,11 @@ export function parseContentBlock(
     return undefined;
   }
 
-  if (block.type === "text" && block.text) {
-    return { type: "text", text: block.text } satisfies TextContentBlock;
+  if (isKnownContentBlockType(block.type)) {
+    return CONTENT_BLOCK_PARSERS[block.type](block, parserName);
   }
 
-  if (block.type === "tool_use") {
-    if (!block.name) {
-      console.warn(`[${parserName}] tool_use block missing name`);
-      return undefined;
-    }
-
-    return {
-      type: "tool_use",
-      toolName: block.name,
-      toolInput: stringifyJson(block.input),
-      ...(block.id && { toolUseId: block.id }),
-    } satisfies ToolUseContentBlock;
-  }
-
-  if (block.type === "tool_result") {
-    const output = block.content;
-    const raw = typeof output === "string" ? output : stringifyJson(output);
-
-    if (raw === undefined) {
-      console.warn(`[${parserName}] tool_result block missing content`);
-      return undefined;
-    }
-
-    return {
-      type: "tool_result",
-      toolOutput: raw,
-      ...(block.tool_use_id && { toolUseId: block.tool_use_id }),
-    } satisfies ToolResultContentBlock;
-  }
-
-  if (block.type === "thinking") {
-    if (block.thinking) {
-      return {
-        type: "thinking",
-        thinking: block.thinking,
-      } satisfies ThinkingContentBlock;
-    }
-    return { type: "redacted_thinking" } satisfies RedactedThinkingContentBlock;
-  }
-
-  if (block.type === "redacted_thinking") {
-    return { type: "redacted_thinking" } satisfies RedactedThinkingContentBlock;
-  }
-
-  if (block.type === "image") {
-    return {
-      type: "image",
-      mediaType: block.source?.media_type,
-    } satisfies ImageContentBlock;
-  }
-
-  if (block.type === "document") {
-    return {
-      type: "document",
-      mediaType: block.source?.media_type,
-    } satisfies DocumentContentBlock;
-  }
-
-  if (!KNOWN_CONTENT_TYPES.has(block.type) && !skipTypes?.has(block.type)) {
-    warnUnknownType(block.type, "content block", parserName);
-  }
-
+  warnUnknownType(block.type, "content block", parserName);
   return undefined;
 }
 

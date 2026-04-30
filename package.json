@@ -1,15 +1,35 @@
 {
-  "name": "devlog",
-  "version": "1.1.0",
+  "name": "@cianfrani/devlog",
+  "version": "0.0.1",
   "description": "Archive AI assistant conversations (Claude Code, opencode, pi)",
-  "bin": {
-    "devlog": "./dist/cli.js"
+  "keywords": [
+    "ai",
+    "archive",
+    "claude-code",
+    "mcp",
+    "opencode",
+    "pi",
+    "transcripts"
+  ],
+  "homepage": "https://github.com/markacianfrani/devlog#readme",
+  "bugs": "https://github.com/markacianfrani/devlog/issues",
+  "license": "MIT",
+  "author": "Mark Anthony Cianfrani",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/markacianfrani/devlog.git"
   },
+  "bin": {
+    "devlog": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit",
     "build:cli": "bun build src/archive.ts --outfile dist/cli.js --target bun",
-    "prepublish": "bun run build:cli",
+    "prepublishOnly": "bun run build:cli",
     "typecheck": "tsc --noEmit",
     "check": "bun run lint && bun test && bun run typecheck",
     "lint": "oxlint --tsconfig tsconfig.json .",
@@ -25,11 +45,18 @@
   },
   "devDependencies": {
     "@j178/prek": "0.3.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.6",
+    "@semantic-release/npm": "^13.1.5",
+    "@semantic-release/release-notes-generator": "^14.1.0",
     "@types/bun": "1.3.6",
     "@types/node": "^20.0.0",
+    "conventional-changelog-conventionalcommits": "^9.3.1",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.31.0",
     "oxlint-tsgolint": "latest",
+    "semantic-release": "^25.0.3",
     "typescript": "^5.0.0"
   }
 }

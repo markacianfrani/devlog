@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"pi-new-records","timestamp":"2026-04-01T00:00:00.000Z","cwd":"/home/user/project"}
+{"type":"message","id":"u1","parentId":null,"timestamp":"2026-04-01T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Start work"}],"timestamp":1775000001000}}
+{"type":"message","id":"empty-tool","parentId":"u1","timestamp":"2026-04-01T00:00:02.000Z","message":{"role":"toolResult","toolCallId":"call_1","toolName":"read","content":[{"type":"text","text":""}],"isError":false,"timestamp":1775000002000}}
+{"type":"compaction","id":"compact1","parentId":"empty-tool","timestamp":"2026-04-01T00:00:03.000Z","summary":"Compacted progress summary"}
+{"type":"label","id":"label1","parentId":"compact1","timestamp":"2026-04-01T00:00:04.000Z","targetId":"u1","label":"checkpoint"}
+{"type":"branch_summary","id":"branch1","parentId":"label1","timestamp":"2026-04-01T00:00:05.000Z","fromId":"u1","summary":"Branch exploration summary"}

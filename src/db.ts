@@ -64,7 +64,7 @@ export interface PrLinkRow {
   timestamp: string | null;
 }
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;

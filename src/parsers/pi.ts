@@ -71,6 +71,10 @@ interface PiGenericEntry {
   parentSession?: string;
   customType?: string;
   content?: unknown;
+  summary?: string;
+  label?: string;
+  targetId?: string;
+  fromId?: string;
 }
 
 const SKIP_TYPES = new Set(["thinking_level_change"]);
@@ -80,6 +84,9 @@ const KNOWN_TYPES = new Set([
   "model_change",
   "session_info",
   "custom_message",
+  "compaction",
+  "branch_summary",
+  "label",
   ...SKIP_TYPES,
 ]);
 
@@ -186,8 +193,10 @@ function buildPiToolResultContent(
   const images: ImageContentBlock[] = [];
 
   for (const block of content) {
-    if (block.type === "text" && block.text) {
-      textParts.push(block.text);
+    if (block.type === "text") {
+      if (block.text) {
+        textParts.push(block.text);
+      }
     } else if (block.type === "image") {
       images.push({ type: "image", mediaType: block.mimeType });
     } else if (block.type !== "thinking") {
@@ -305,17 +314,22 @@ function hasPiUsage(entry: PiGenericEntry): boolean {
   return (entry.message?.usage?.input ?? 0) > 0 || (entry.message?.usage?.output ?? 0) > 0;
 }
 
-function buildCustomMessage(
+function buildSyntheticPiTextMessage(
   entry: PiGenericEntry,
   sessionId: string | undefined,
+  tagName: string,
+  body: string,
+  attributes: Record<string, string | undefined> = {},
 ): CleanMessage | undefined {
-  const body = typeof entry.content === "string" ? entry.content : "";
-  if (!body && !entry.customType) {
+  if (!body) {
     return undefined;
   }
 
-  const customType = entry.customType ?? "unknown";
-  const wrapped = `<pi:custom-message customType="${customType}">${body}</pi:custom-message>`;
+  const serializedAttributes = Object.entries(attributes)
+    .filter((entry): entry is [string, string] => entry[1] !== undefined)
+    .map(([name, value]) => ` ${name}="${value}"`)
+    .join("");
+  const wrapped = `<pi:${tagName}${serializedAttributes}>${body}</pi:${tagName}>`;
 
   return createUserMessage(
     {
@@ -326,6 +340,41 @@ function buildCustomMessage(
     },
     [{ type: "text", text: wrapped }],
   );
+}
+
+function buildCustomMessage(
+  entry: PiGenericEntry,
+  sessionId: string | undefined,
+): CleanMessage | undefined {
+  const body = typeof entry.content === "string" ? entry.content : "";
+  if (!body && !entry.customType) {
+    return undefined;
+  }
+
+  return buildSyntheticPiTextMessage(entry, sessionId, "custom-message", body, {
+    customType: entry.customType ?? "unknown",
+  });
+}
+
+function buildPiSummaryMessage(
+  entry: PiGenericEntry,
+  sessionId: string | undefined,
+): CleanMessage | undefined {
+  if (typeof entry.summary !== "string") {
+    return undefined;
+  }
+
+  if (entry.type === "compaction") {
+    return buildSyntheticPiTextMessage(entry, sessionId, "compaction", entry.summary);
+  }
+
+  if (entry.type === "branch_summary") {
+    return buildSyntheticPiTextMessage(entry, sessionId, "branch-summary", entry.summary, {
+      fromId: entry.fromId,
+    });
+  }
+
+  return undefined;
 }
 
 function parsePiEntry(
@@ -353,6 +402,14 @@ function parsePiEntry(
 
   if (entry.type === "custom_message") {
     return { malformed: false, message: buildCustomMessage(entry, state.sessionId) };
+  }
+
+  if (entry.type === "compaction" || entry.type === "branch_summary") {
+    return { malformed: false, message: buildPiSummaryMessage(entry, state.sessionId) };
+  }
+
+  if (entry.type === "label") {
+    return { malformed: false };
   }
 
   if (!isPiMessageEntry(entry) || !isPiMessageRole(entry.message?.role)) {

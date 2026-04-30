@@ -467,6 +467,45 @@ describe("Pi parser", () => {
     }
   });
 
+  test("parses pi compaction and branch summary records without noisy warnings", async () => {
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    };
+
+    try {
+      const result = expectParsed(
+        await parsePiSession(path.join(FIXTURES_DIR, "pi-new-records.jsonl"), "test-project"),
+      );
+
+      expect(warnings.filter((w) => w.includes("Unknown"))).toHaveLength(0);
+      expect(result.messages).toHaveLength(3);
+
+      const compaction = result.messages.find((m) => m.id === "compact1");
+      expect(compaction).toBeDefined();
+      if (!compaction) {
+        throw new Error("Expected compaction message");
+      }
+      expect(compaction.content[0].type).toBe("text");
+      expect((compaction.content[0] as TextContentBlock).text).toContain(
+        "<pi:compaction>Compacted progress summary</pi:compaction>",
+      );
+
+      const branchSummary = result.messages.find((m) => m.id === "branch1");
+      expect(branchSummary).toBeDefined();
+      if (!branchSummary) {
+        throw new Error("Expected branch summary message");
+      }
+      expect(branchSummary.content[0].type).toBe("text");
+      expect((branchSummary.content[0] as TextContentBlock).text).toContain(
+        '<pi:branch-summary fromId="u1">Branch exploration summary</pi:branch-summary>',
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   test("keeps Pi parsing separate from redaction transform", async () => {
     const parsed = expectParsed(
       await parsePiSession(path.join(FIXTURES_DIR, "pi-redaction.jsonl"), "test-project"),

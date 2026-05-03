@@ -25,6 +25,7 @@ const SKIP_TYPES = new Set([
   "file-history-snapshot",
   "summary",
   "custom-title",
+  "ai-title",
   "system",
   "queue-operation",
   "last-prompt",
@@ -45,6 +46,7 @@ interface ClaudeRecord {
   agentId?: string;
   summary?: string;
   customTitle?: string;
+  aiTitle?: string;
   leafUuid?: string;
   prNumber?: number;
   prUrl?: string;
@@ -62,13 +64,30 @@ interface ClaudeRecord {
   };
 }
 
+type TitleSource = "summary" | "ai-title" | "custom-title";
+
+const TITLE_PRIORITY: Record<TitleSource, number> = {
+  summary: 1,
+  "ai-title": 2,
+  "custom-title": 3,
+};
+
 interface SessionState {
   sessionId?: string;
   cwd?: string;
   title?: string;
+  titleSource?: TitleSource;
   createdAt?: string;
   updatedAt?: string;
   model?: string;
+}
+
+function setTitle(state: SessionState, source: TitleSource, value: string): void {
+  const currentPriority = state.titleSource ? TITLE_PRIORITY[state.titleSource] : 0;
+  if (TITLE_PRIORITY[source] >= currentPriority) {
+    state.title = value;
+    state.titleSource = source;
+  }
 }
 
 function isClaudeRecord(value: unknown): value is ClaudeRecord {
@@ -102,11 +121,15 @@ function parseClaudeJsonLine(line: string): ClaudeRecord | undefined {
 // Mutates state.title when record.type === "summary".
 function classifyClaudeRecord(record: ClaudeRecord, state: SessionState): "skip" | "process" {
   if (record.type === "summary" && record.summary) {
-    state.title = record.summary;
+    setTitle(state, "summary", record.summary);
+    return "skip";
+  }
+  if (record.type === "ai-title" && record.aiTitle) {
+    setTitle(state, "ai-title", record.aiTitle);
     return "skip";
   }
   if (record.type === "custom-title" && record.customTitle) {
-    state.title = record.customTitle;
+    setTitle(state, "custom-title", record.customTitle);
     return "skip";
   }
   if (SKIP_TYPES.has(record.type) || record.isMeta) {

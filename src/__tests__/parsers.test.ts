@@ -223,6 +223,24 @@ describe("Claude parser", () => {
     expect(result.messages).toHaveLength(2);
   });
 
+  test("custom-title beats ai-title regardless of file order", async () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (msg: string) => warnings.push(msg);
+
+    try {
+      const result = expectParsed(
+        await parseClaudeSession(path.join(FIXTURES_DIR, "claude-ai-title.jsonl"), "test-project"),
+      );
+
+      expect(result.meta.title).toBe("User custom title");
+      expect(result.messages).toHaveLength(2);
+      expect(warnings.filter((w) => w.includes("ai-title"))).toHaveLength(0);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   test("returns empty prLinks when none present", async () => {
     const result = expectParsed(
       await parseClaudeSession(path.join(FIXTURES_DIR, "claude-simple.jsonl"), "test-project"),

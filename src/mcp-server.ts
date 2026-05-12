@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import path from "node:path";
 import { z } from "zod";
 import { loadConfig } from "./config.ts";
-import { getDb } from "./db.ts";
+import { getDb, getReadonlyDb } from "./db.ts";
 
 const CONFIGURED_DB_PATH = loadConfig().dbPath;
 
@@ -386,7 +386,7 @@ function registerQuery(server: McpServer) {
       sql: z.string().describe("SQL SELECT query to execute"),
     },
     async ({ sql }) => {
-      const db = getDb(CONFIGURED_DB_PATH);
+      const db = getReadonlyDb(CONFIGURED_DB_PATH);
       const rows = db.query(sql).all();
       const text = rows.length === 0 ? "(no rows)" : JSON.stringify(rows, undefined, 2);
       return { content: [{ type: "text", text }] };

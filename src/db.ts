@@ -68,6 +68,7 @@ const SCHEMA_VERSION = 11;
 const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;
+let readonlyDb: Database | undefined;
 
 const SCHEMA = `
 -- Schema version tracking
@@ -214,10 +215,25 @@ export function getDb(dbPath: string = DEFAULT_DB_PATH): Database {
   return db;
 }
 
+export function getReadonlyDb(dbPath: string = DEFAULT_DB_PATH): Database {
+  if (readonlyDb) {
+    return readonlyDb;
+  }
+
+  // Ensure the RW connection has run schema init so the file exists.
+  getDb(dbPath);
+  readonlyDb = new Database(dbPath, { readonly: true });
+  return readonlyDb;
+}
+
 export function closeDb() {
   if (db) {
     db.close();
     db = undefined;
+  }
+  if (readonlyDb) {
+    readonlyDb.close();
+    readonlyDb = undefined;
   }
 }
 

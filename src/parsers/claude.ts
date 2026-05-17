@@ -18,9 +18,15 @@ import {
   type ContentBlock,
   type ParseResult,
   type PrLink,
+  type WorktreeInfo,
 } from "./types.ts";
 
-const SKIP_TYPES = new Set([
+// Record types that exist in the transcript but do not produce a CleanMessage.
+// Some are pure noise (progress, file-history-snapshot, attachment); others are
+// consumed for session state by explicit handler branches in classifyClaudeRecord
+// (summary, ai-title, custom-title, worktree-state). Both kinds live here so
+// KNOWN_TYPES below can suppress the "Unknown record type" warning uniformly.
+const NON_MESSAGE_TYPES = new Set([
   "progress",
   "file-history-snapshot",
   "summary",
@@ -32,8 +38,9 @@ const SKIP_TYPES = new Set([
   "agent-name",
   "permission-mode",
   "attachment",
+  "worktree-state",
 ]);
-const KNOWN_TYPES = new Set([...SKIP_TYPES, ...MESSAGE_ROLES, "pr-link"]);
+const KNOWN_TYPES = new Set([...NON_MESSAGE_TYPES, ...MESSAGE_ROLES, "pr-link"]);
 
 interface ClaudeRecord {
   type: string;
@@ -51,6 +58,14 @@ interface ClaudeRecord {
   prNumber?: number;
   prUrl?: string;
   prRepository?: string;
+  worktreeSession?: {
+    originalCwd?: string;
+    worktreePath?: string;
+    worktreeName?: string;
+    worktreeBranch?: string;
+    originalBranch?: string;
+    originalHeadCommit?: string;
+  };
   message?: {
     role?: string;
     model?: string;
@@ -80,6 +95,7 @@ interface SessionState {
   createdAt?: string;
   updatedAt?: string;
   model?: string;
+  worktree?: WorktreeInfo;
 }
 
 function setTitle(state: SessionState, source: TitleSource, value: string): void {
@@ -88,6 +104,21 @@ function setTitle(state: SessionState, source: TitleSource, value: string): void
     state.title = value;
     state.titleSource = source;
   }
+}
+
+function captureWorktree(state: SessionState, record: ClaudeRecord): void {
+  const w = record.worktreeSession;
+  if (!w?.worktreePath || !w.worktreeName) {
+    return;
+  }
+  state.worktree = {
+    worktreePath: w.worktreePath,
+    worktreeName: w.worktreeName,
+    originalCwd: w.originalCwd,
+    worktreeBranch: w.worktreeBranch,
+    originalBranch: w.originalBranch,
+    originalHeadCommit: w.originalHeadCommit,
+  };
 }
 
 function isClaudeRecord(value: unknown): value is ClaudeRecord {
@@ -132,7 +163,11 @@ function classifyClaudeRecord(record: ClaudeRecord, state: SessionState): "skip"
     setTitle(state, "custom-title", record.customTitle);
     return "skip";
   }
-  if (SKIP_TYPES.has(record.type) || record.isMeta) {
+  if (record.type === "worktree-state") {
+    captureWorktree(state, record);
+    return "skip";
+  }
+  if (NON_MESSAGE_TYPES.has(record.type) || record.isMeta) {
     return "skip";
   }
   if (record.type !== "user" && record.type !== "assistant") {
@@ -272,6 +307,7 @@ export async function parseClaudeSession(
       createdAt: state.createdAt,
       updatedAt: state.updatedAt,
       parentSessionId: extractParentSessionIdFromPath(jsonlPath),
+      worktree: state.worktree,
     },
     messages,
     prLinks: [...prLinkMap.values()],

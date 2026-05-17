@@ -105,6 +105,26 @@ function insertSession(db: Database, result: ParseResult, filePath: string, mtim
   );
 }
 
+function insertWorktree(db: Database, result: ParseResult, filePath: string) {
+  const w = result.meta.worktree;
+  if (!w) {
+    return;
+  }
+  db.run(
+    `INSERT INTO session_worktrees (file_path, worktree_path, worktree_name, original_cwd, worktree_branch, original_branch, original_head_commit)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      filePath,
+      w.worktreePath,
+      w.worktreeName,
+      toSqlValue(w.originalCwd),
+      toSqlValue(w.worktreeBranch),
+      toSqlValue(w.originalBranch),
+      toSqlValue(w.originalHeadCommit),
+    ],
+  );
+}
+
 function insertMessages(db: Database, result: ParseResult, filePath: string) {
   const insertMsg = db.prepare(
     `INSERT INTO messages (id, file_path, parent_id, role, timestamp, model, tokens_in, tokens_out, cache_read_tokens, cache_write_tokens, reasoning_tokens, agent_id)
@@ -252,6 +272,7 @@ export async function indexSession(
       deleteSession(db, jsonlPath, existing.sessionId);
     }
     insertSession(db, result, jsonlPath, mtime);
+    insertWorktree(db, result, jsonlPath);
     insertMessages(db, result, jsonlPath);
     insertPrLinks(db, result, jsonlPath);
     db.exec("COMMIT");

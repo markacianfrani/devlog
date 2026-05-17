@@ -93,6 +93,18 @@ export interface AssistantMessage extends BaseMessage {
 
 export type CleanMessage = UserMessage | AssistantMessage;
 
+// Shape spans sources: claude's worktree-state records fill every field;
+// pi-worktree sessions can only supply worktreePath + worktreeName (detected
+// from the cwd, since pi emits no structured worktree metadata).
+export interface WorktreeInfo {
+  worktreePath: string;
+  worktreeName: string;
+  originalCwd?: string;
+  worktreeBranch?: string;
+  originalBranch?: string;
+  originalHeadCommit?: string;
+}
+
 export interface SessionMeta {
   id: string;
   source: Source;
@@ -103,6 +115,7 @@ export interface SessionMeta {
   createdAt?: string;
   updatedAt?: string;
   parentSessionId?: string;
+  worktree?: WorktreeInfo;
 }
 
 export interface PrLink {
@@ -143,6 +156,7 @@ export interface SessionMetaDraft {
   createdAt?: string;
   updatedAt?: string;
   parentSessionId?: string;
+  worktree?: WorktreeInfo;
 }
 
 export interface PrLinkDraft {
@@ -243,6 +257,7 @@ export function createSessionMeta(draft: SessionMetaDraft): SessionMeta | undefi
     ...(draft.createdAt && { createdAt: draft.createdAt }),
     ...(draft.updatedAt && { updatedAt: draft.updatedAt }),
     ...(draft.parentSessionId && { parentSessionId: draft.parentSessionId }),
+    ...(draft.worktree && { worktree: draft.worktree }),
   };
 }
 

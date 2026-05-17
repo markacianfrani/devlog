@@ -4,7 +4,6 @@ import { parseClaudeSession } from "../parsers/claude.ts";
 import { parseOpenCodeSession } from "../parsers/opencode.ts";
 import { parsePiSession } from "../parsers/pi.ts";
 import { parseContentBlock } from "../parsers/shared.ts";
-import { redactParseResult } from "../redaction.ts";
 import type {
   ParseResult,
   TextContentBlock,
@@ -12,6 +11,7 @@ import type {
   ToolResultContentBlock,
   ToolUseContentBlock,
 } from "../parsers/types.ts";
+import { redactParseResult } from "../redaction.ts";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures");
 
@@ -281,6 +281,31 @@ describe("Claude parser", () => {
       await parseClaudeSession(path.join(FIXTURES_DIR, "claude-simple.jsonl"), "test-project"),
     );
     expect(result.meta.parentSessionId).toBeUndefined();
+  });
+
+  test("captures worktree-state: last valid record wins, malformed records are ignored, cwd untouched", async () => {
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-worktree.jsonl"), "test-project"),
+    );
+
+    // cwd stays where work actually happens (message cwd), even though
+    // worktreeSession.originalCwd points elsewhere -- pin both sides so a
+    // regression that overwrites cwd with originalCwd fails loudly.
+    expect(result.meta.cwd).toBe("/home/user/project/.claude/worktrees/feature-spike");
+    expect(result.meta.cwd).not.toBe(result.meta.worktree?.originalCwd);
+
+    // Fixture has, in order: valid (commit=abc), user, assistant, valid
+    // (commit=def), malformed (missing worktreePath), malformed (missing
+    // worktreeName). Last-valid-wins should land on def; either malformed
+    // record clobbering state would fail this assertion.
+    expect(result.meta.worktree).toEqual({
+      worktreePath: "/home/user/project/.claude/worktrees/feature-spike",
+      worktreeName: "feature-spike",
+      originalCwd: "/home/user/project",
+      worktreeBranch: "worktree-feature-spike",
+      originalBranch: "main",
+      originalHeadCommit: "def4567890abc",
+    });
   });
 
   test("preserves redacted thinking blocks (empty thinking string)", async () => {
@@ -559,7 +584,12 @@ describe("shared parser helpers", () => {
   test("parses tool_use blocks", () => {
     expect(
       parseContentBlock(
-        { type: "tool_use", id: "tool-1", name: "Read", input: { file_path: "README.md" } },
+        {
+          type: "tool_use",
+          id: "tool-1",
+          name: "Read",
+          input: { file_path: "README.md" },
+        },
         "test-parser",
       ),
     ).toEqual({

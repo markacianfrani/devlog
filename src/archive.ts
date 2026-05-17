@@ -686,6 +686,12 @@ function archiveOpencodeFromFiles(
   return makeSummary("opencode", stats, "messages");
 }
 
+// Pi writes sessions in two layouts that coexist on disk:
+//   flat:   <project>/<id>.jsonl
+//   nested: <project>/<topGroup>/<subagent>/run-<N>/session.jsonl  (pi-subagents)
+// The nested layout has no session.jsonl at intermediate levels and every leaf
+// shares the filename "session.jsonl", so the archive name folds the hierarchy
+// in to avoid collisions: <topGroup>__<subagent>__run-<N>.jsonl.
 function* iteratePiSessionFiles(): Generator<{ sourcePath: string; fileName: string }> {
   for (const sessionDir of fs.readdirSync(PI_SESSIONS_DIR)) {
     const dirPath = path.join(PI_SESSIONS_DIR, sessionDir);
@@ -694,9 +700,35 @@ function* iteratePiSessionFiles(): Generator<{ sourcePath: string; fileName: str
     }
 
     for (const entry of fs.readdirSync(dirPath)) {
+      const entryPath = path.join(dirPath, entry);
       if (entry.endsWith(".jsonl")) {
-        yield { sourcePath: path.join(dirPath, entry), fileName: entry };
+        yield { sourcePath: entryPath, fileName: entry };
+        continue;
       }
+      if (!fs.statSync(entryPath).isDirectory()) {
+        continue;
+      }
+      yield* iteratePiSubagentFiles(entryPath, entry);
+    }
+  }
+}
+
+function* iteratePiSubagentFiles(
+  topGroupDir: string,
+  topGroup: string,
+): Generator<{ sourcePath: string; fileName: string }> {
+  for (const subagent of fs.readdirSync(topGroupDir)) {
+    const subagentDir = path.join(topGroupDir, subagent);
+    if (!fs.statSync(subagentDir).isDirectory()) {
+      continue;
+    }
+
+    for (const runEntry of fs.readdirSync(subagentDir)) {
+      const sourcePath = path.join(subagentDir, runEntry, "session.jsonl");
+      if (!fs.existsSync(sourcePath)) {
+        continue;
+      }
+      yield { sourcePath, fileName: `${topGroup}__${subagent}__${runEntry}.jsonl` };
     }
   }
 }

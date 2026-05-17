@@ -165,3 +165,41 @@ export function setupPiSession(
   ]);
   return path.join(sessionDir, fileName);
 }
+
+// pi-subagents extension layout: <project>/<topGroup>/<subagent>/run-<N>/session.jsonl.
+// There is no session.jsonl at the top level -- only at the leaves.
+export function setupPiSubagentSession(
+  home: string,
+  opts: {
+    sessionId: string;
+    worktree: string;
+    topGroup: string;
+    subagent: string;
+    run: number;
+    entries: Array<Record<string, unknown>>;
+  },
+): string {
+  const sessionDirName = `--${opts.worktree.split(path.sep).filter(Boolean).join("-")}--`;
+  const leafDir = path.join(
+    home,
+    ".pi",
+    "agent",
+    "sessions",
+    sessionDirName,
+    opts.topGroup,
+    opts.subagent,
+    `run-${opts.run}`,
+  );
+  const sourcePath = path.join(leafDir, "session.jsonl");
+  writeJsonl(sourcePath, [
+    {
+      type: "session",
+      version: 3,
+      id: opts.sessionId,
+      timestamp: "2026-05-17T17:04:32.641Z",
+      cwd: opts.worktree,
+    },
+    ...opts.entries,
+  ]);
+  return sourcePath;
+}

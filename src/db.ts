@@ -19,6 +19,16 @@ export interface SessionRow {
   mtime: number;
 }
 
+export interface SessionWorktreeRow {
+  file_path: string;
+  worktree_path: string;
+  worktree_name: string;
+  original_cwd: string | null;
+  worktree_branch: string | null;
+  original_branch: string | null;
+  original_head_commit: string | null;
+}
+
 export interface MessageRow {
   id: string;
   file_path: string;
@@ -64,7 +74,7 @@ export interface PrLinkRow {
   timestamp: string | null;
 }
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;
@@ -94,6 +104,25 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
+
+-- 1:1 side table for sessions running inside a git worktree.
+-- worktree_path + worktree_name are always present when the row exists; the rest
+-- are nullable because pi worktree sessions can only be detected (via cwd
+-- containing "pi-worktree"), not described -- pi emits no structured metadata.
+-- An index on original_cwd lets us group worktree sessions under their real
+-- project when claude provides that field.
+CREATE TABLE IF NOT EXISTS session_worktrees (
+	file_path TEXT PRIMARY KEY,
+	worktree_path TEXT NOT NULL,
+	worktree_name TEXT NOT NULL,
+	original_cwd TEXT,
+	worktree_branch TEXT,
+	original_branch TEXT,
+	original_head_commit TEXT,
+	FOREIGN KEY (file_path) REFERENCES sessions(file_path) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_worktrees_original_cwd ON session_worktrees(original_cwd);
 
 -- Messages table (references sessions by file_path)
 CREATE TABLE IF NOT EXISTS messages (
@@ -193,6 +222,7 @@ function initializeSchema(database: Database) {
     database.exec("DROP TABLE IF EXISTS messages_fts");
     database.exec("DROP TABLE IF EXISTS content_blocks");
     database.exec("DROP TABLE IF EXISTS pr_links");
+    database.exec("DROP TABLE IF EXISTS session_worktrees");
     database.exec("DROP TABLE IF EXISTS messages");
     database.exec("DROP TABLE IF EXISTS sessions");
     database.exec("DROP TABLE IF EXISTS schema_version");

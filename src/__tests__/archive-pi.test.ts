@@ -6,6 +6,7 @@ import {
   ensureDir,
   runArchive,
   setupPiSession,
+  setupPiSubagentSession,
   slugFromPath,
   writeConfig,
 } from "./archive-fixtures.ts";
@@ -138,6 +139,118 @@ test("re-archives pi sessions when source file changes", () => {
 
     const secondLines = fs.readFileSync(archivePath, "utf-8").trim().split("\n");
     expect(secondLines).toHaveLength(3);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("archives pi-subagents nested sessions with hierarchy preserved in the filename", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "devlog-test-"));
+  try {
+    const worktree = path.join(home, "Code", "pi-project");
+    ensureDir(worktree);
+    const slug = slugFromPath(worktree);
+
+    const topGroup = "2026-05-17T17-03-17-486Z_top-uuid-1";
+
+    // Two subagents under the same top group, one of them with two runs.
+    // pi-subagents writes session.jsonl four levels below the project dir,
+    // and every leaf has the same filename -- so the archive name must
+    // disambiguate by top group, subagent, and run.
+    setupPiSubagentSession(home, {
+      sessionId: "pi-sub-a-run-0",
+      worktree,
+      topGroup,
+      subagent: "subagent-aaaa",
+      run: 0,
+      entries: [
+        {
+          type: "message",
+          message: { role: "user", content: "subagent A first run" },
+        },
+      ],
+    });
+    setupPiSubagentSession(home, {
+      sessionId: "pi-sub-a-run-1",
+      worktree,
+      topGroup,
+      subagent: "subagent-aaaa",
+      run: 1,
+      entries: [
+        {
+          type: "message",
+          message: { role: "user", content: "subagent A second run" },
+        },
+      ],
+    });
+    setupPiSubagentSession(home, {
+      sessionId: "pi-sub-b-run-0",
+      worktree,
+      topGroup,
+      subagent: "subagent-bbbb",
+      run: 0,
+      entries: [
+        {
+          type: "message",
+          message: { role: "user", content: "subagent B" },
+        },
+      ],
+    });
+
+    const result = runArchive(home);
+    expect(result.exitCode).toBe(0);
+
+    const piDir = path.join(home, ".config", "devlog", "projects", slug, "pi");
+
+    // All three leaf files should land in pi/ with names that capture the
+    // top group / subagent / run so they cannot collide.
+    const expectA0 = path.join(piDir, `${topGroup}__subagent-aaaa__run-0.jsonl`);
+    const expectA1 = path.join(piDir, `${topGroup}__subagent-aaaa__run-1.jsonl`);
+    const expectB0 = path.join(piDir, `${topGroup}__subagent-bbbb__run-0.jsonl`);
+
+    expect(fs.existsSync(expectA0)).toBe(true);
+    expect(fs.existsSync(expectA1)).toBe(true);
+    expect(fs.existsSync(expectB0)).toBe(true);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("flat and nested pi layouts can coexist for the same project", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "devlog-test-"));
+  try {
+    const worktree = path.join(home, "Code", "pi-project");
+    ensureDir(worktree);
+    const slug = slugFromPath(worktree);
+
+    setupPiSession(home, {
+      sessionId: "pi-legacy",
+      worktree,
+      fileName: "pi-legacy.jsonl",
+      entries: [{ type: "message", message: { role: "user", content: "legacy flat" } }],
+    });
+
+    setupPiSubagentSession(home, {
+      sessionId: "pi-nested",
+      worktree,
+      topGroup: "2026-05-17T17-03-17-486Z_top",
+      subagent: "subagent-xyz",
+      run: 0,
+      entries: [{ type: "message", message: { role: "user", content: "nested leaf" } }],
+    });
+
+    const result = runArchive(home);
+    expect(result.exitCode).toBe(0);
+
+    const piDir = path.join(home, ".config", "devlog", "projects", slug, "pi");
+    const legacyArchive = path.join(piDir, "pi-legacy.jsonl");
+    const nestedArchive = path.join(
+      piDir,
+      "2026-05-17T17-03-17-486Z_top__subagent-xyz__run-0.jsonl",
+    );
+
+    expect(fs.existsSync(legacyArchive)).toBe(true);
+    expect(fs.existsSync(nestedArchive)).toBe(true);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

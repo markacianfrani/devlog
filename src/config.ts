@@ -1,16 +1,21 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { Source } from "./parsers/types.ts";
+
+export type { Source };
 
 export interface RawConfig {
   archiveDir?: string;
   excludeProjects?: string[];
+  excludeSources?: Source[];
   dbPath?: string;
 }
 
 export interface ResolvedConfig {
   archiveDir: string;
   excludeProjects: string[];
+  excludeSources: Source[];
   dbPath: string;
 }
 
@@ -19,6 +24,7 @@ export const CONFIG_PATH = path.join(os.homedir(), ".config", "devlog", "config.
 export const DEFAULTS: ResolvedConfig = {
   archiveDir: path.join(os.homedir(), ".config", "devlog"),
   excludeProjects: [],
+  excludeSources: [],
   dbPath: path.join(os.homedir(), ".local", "state", "devlog", "index.db"),
 };
 
@@ -34,6 +40,7 @@ export function loadConfig(): ResolvedConfig {
     return {
       archiveDir: config.archiveDir ?? DEFAULTS.archiveDir,
       excludeProjects: config.excludeProjects ?? DEFAULTS.excludeProjects,
+      excludeSources: config.excludeSources ?? DEFAULTS.excludeSources,
       dbPath: config.dbPath ?? DEFAULTS.dbPath,
     };
   } catch {

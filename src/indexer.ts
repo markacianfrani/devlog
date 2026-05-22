@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { loadConfig, type Source } from "./config.ts";
 import {
   createIndexRedactionContext,
   redactForIndexing,
@@ -9,7 +10,7 @@ import {
 import { parseClaudeSession } from "./parsers/claude.ts";
 import { parseOpenCodeSession } from "./parsers/opencode.ts";
 import { parsePiSession } from "./parsers/pi.ts";
-import type { ParseResult, Source } from "./parsers/types.ts";
+import type { ParseResult } from "./parsers/types.ts";
 
 export interface IndexFailure {
   filePath: string;
@@ -327,6 +328,11 @@ function getProjectAndSource(
   return { project, source };
 }
 
+function isSourceExcluded(source: Source): boolean {
+  const config = loadConfig();
+  return config.excludeSources.includes(source);
+}
+
 export async function indexAll(
   archiveDir: string,
   rebuild: boolean,
@@ -354,7 +360,7 @@ export async function indexAll(
 
   for (const filePath of jsonlFiles) {
     const info = getProjectAndSource(filePath, archiveDir);
-    if (!info) {
+    if (!info || isSourceExcluded(info.source)) {
       continue;
     }
 

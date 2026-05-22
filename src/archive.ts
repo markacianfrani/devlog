@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { loadConfig } from "./config.ts";
+import { loadConfig, type Source } from "./config.ts";
 import {
   countUserMessages,
   iterateOpencodeDbSessions,
@@ -831,6 +831,10 @@ function archivePiSessions(
   };
 }
 
+function isExcluded(source: Source): boolean {
+  return config.excludeSources.includes(source);
+}
+
 async function archiveMain(options: CliOptions = DEFAULT_CLI_OPTIONS) {
   const startedAt = Date.now();
   const progress = new ProgressReporter(options);
@@ -838,26 +842,37 @@ async function archiveMain(options: CliOptions = DEFAULT_CLI_OPTIONS) {
   ensureDir(ARCHIVE_DIR);
   ensureDir(PROJECTS_ARCHIVE_DIR);
 
-  const claude = archiveClaudeProjects(options, progress);
-  const opencodeDb = archiveOpencodeFromDb(options, progress);
-  const pi = archivePiSessions(options, progress);
+  const summaries: SourceSummary[] = [];
 
-  let opencode = opencodeDb.summary;
-
-  if (!opencodeDb.handled) {
-    if (fs.existsSync(OPENCODE_SESSIONS_DIR)) {
-      const opencodeFiles = archiveOpencodeFromFiles(options, progress);
-      opencode = {
-        ...opencodeFiles,
-        warnings: opencode.warnings + opencodeFiles.warnings,
-      };
-    } else {
-      progress.warn("[devlog] opencode storage not found");
-      opencode = { ...opencode, warnings: opencode.warnings + 1 };
-    }
+  if (!isExcluded("claude")) {
+    summaries.push(archiveClaudeProjects(options, progress));
   }
 
-  printArchiveSummary([claude, opencode, pi], ARCHIVE_DIR, Date.now() - startedAt);
+  if (!isExcluded("opencode")) {
+    const opencodeDb = archiveOpencodeFromDb(options, progress);
+    let opencode = opencodeDb.summary;
+
+    if (!opencodeDb.handled) {
+      if (fs.existsSync(OPENCODE_SESSIONS_DIR)) {
+        const opencodeFiles = archiveOpencodeFromFiles(options, progress);
+        opencode = {
+          ...opencodeFiles,
+          warnings: opencode.warnings + opencodeFiles.warnings,
+        };
+      } else {
+        progress.warn("[devlog] opencode storage not found");
+        opencode = { ...opencode, warnings: opencode.warnings + 1 };
+      }
+    }
+
+    summaries.push(opencode);
+  }
+
+  if (!isExcluded("pi")) {
+    summaries.push(archivePiSessions(options, progress));
+  }
+
+  printArchiveSummary(summaries, ARCHIVE_DIR, Date.now() - startedAt);
 }
 
 async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_CLI_OPTIONS) {
@@ -926,6 +941,12 @@ async function main() {
     console.log("  --verbose  Show per-project and per-session details");
     console.log("  --debug    Include noisy debug logs");
     console.log("  --help     Show this help message");
+    console.log("");
+    console.log("Config: ~/.config/devlog/config.json");
+    console.log('  excludeSources    Sources to skip (e.g. ["opencode"])');
+    console.log('  excludeProjects   Project slugs to skip (e.g. ["my-private-repo"])');
+    console.log("  archiveDir        Custom archive directory");
+    console.log("  dbPath            Custom database path");
     return;
   }
 
@@ -970,6 +991,12 @@ async function main() {
       console.log("  --rebuild  Re-index all sessions, ignoring cache");
       console.log("  --verbose  Show per-project and per-session details");
       console.log("  --debug    Include noisy debug logs");
+      console.log("");
+      console.log("Config: ~/.config/devlog/config.json");
+      console.log('  excludeSources    Sources to skip (e.g. ["opencode"])');
+      console.log('  excludeProjects   Project slugs to skip (e.g. ["my-private-repo"])');
+      console.log("  archiveDir        Custom archive directory");
+      console.log("  dbPath            Custom database path");
       process.exit(1);
   }
 }

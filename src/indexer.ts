@@ -10,7 +10,8 @@ import {
 import { parseClaudeSession } from "./parsers/claude.ts";
 import { parseOpenCodeSession } from "./parsers/opencode.ts";
 import { parsePiSession } from "./parsers/pi.ts";
-import type { ParseOutcome, ParseResult, ParseWarning } from "./parsers/types.ts";
+import type { ParseOutcome, ParseResult } from "./parsers/types.ts";
+import type { ParseWarning } from "./parsers/types.ts";
 
 export interface IndexFailure {
   filePath: string;
@@ -243,12 +244,12 @@ export async function indexSession(
   db: Database,
   redactionContext?: IndexRedactionContext,
   onWarning?: (warning: ParseWarning) => void,
-): Promise<{ indexed: boolean; messageCount: number; warnings: number }> {
+): Promise<{ indexed: boolean; messageCount: number }> {
   const mtime = getMtime(jsonlPath);
   const existing = checkSession(db, jsonlPath, mtime);
 
   if (existing.sameVersion) {
-    return { indexed: false, messageCount: 0, warnings: 0 };
+    return { indexed: false, messageCount: 0 };
   }
 
   let outcome: ParseOutcome;
@@ -266,13 +267,13 @@ export async function indexSession(
 
   let result = outcome.result;
   if (!result) {
-    return { indexed: false, messageCount: 0, warnings: outcome.warnings.length };
+    return { indexed: false, messageCount: 0 };
   }
 
   result = redactForIndexing(result, redactionContext);
 
   if (result.messages.length === 0) {
-    return { indexed: false, messageCount: 0, warnings: outcome.warnings.length };
+    return { indexed: false, messageCount: 0 };
   }
 
   db.exec("BEGIN TRANSACTION");
@@ -290,7 +291,7 @@ export async function indexSession(
     throw err;
   }
 
-  return { indexed: true, messageCount: result.messages.length, warnings: outcome.warnings.length };
+  return { indexed: true, messageCount: result.messages.length };
 }
 
 function findJsonlFiles(dir: string): string[] {
@@ -380,9 +381,11 @@ export async function indexAll(
         info.project,
         db,
         redactionContext,
-        callbacks?.onWarning,
+        (warning) => {
+          stats.warnings++;
+          callbacks?.onWarning?.(warning);
+        },
       );
-      stats.warnings += result.warnings;
       if (result.indexed) {
         stats.sessionsIndexed++;
         stats.messagesIndexed += result.messageCount;

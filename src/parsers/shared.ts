@@ -11,17 +11,14 @@ import type {
   ThinkingContentBlock,
   ToolResultContentBlock,
   ToolUseContentBlock,
+  UnknownWarningContext,
 } from "./types.ts";
 import { CONTENT_BLOCK_TYPES } from "./types.ts";
 
-const seenUnknownTypes = new Set<string>();
-
-export type UnknownWarningContext = "record" | "content block";
-
-const UNKNOWN_KIND_BY_CONTEXT = {
+const UNKNOWN_KIND_BY_CONTEXT: Record<UnknownWarningContext, ParseWarningKind> = {
   record: "unknown-record-type",
   "content block": "unknown-content-block-type",
-} satisfies Record<UnknownWarningContext, ParseWarningKind>;
+};
 
 interface WarningDraft {
   kind: ParseWarningKind;
@@ -32,15 +29,10 @@ interface WarningDraft {
   type?: string;
 }
 
-interface ContentWarningSink {
-  missingField(message: string): void;
-  unknownType(type: string, context: UnknownWarningContext): void;
-}
-
-export class ParseLineContext implements ContentWarningSink {
+export class ParseLineContext {
   constructor(
     private readonly collector: ParseWarningCollector,
-    private readonly lineNumber: number,
+    readonly lineNumber: number,
   ) {}
 
   missingField(message: string): void {
@@ -55,11 +47,11 @@ export class ParseLineContext implements ContentWarningSink {
     content: string | RawContentBlock[] | undefined,
     skipTypes?: Set<string>,
   ): ContentBlock[] {
-    return this.collector.parseContent(content, skipTypes, this.lineNumber);
+    return parseContentImpl(content, this.collector, skipTypes, this.lineNumber);
   }
 
   parseContentBlock(block: RawContentBlock, skipTypes?: Set<string>): ContentBlock | undefined {
-    return this.collector.parseContentBlock(block, skipTypes, this.lineNumber);
+    return parseContentBlockImpl(block, this.collector, skipTypes, this.lineNumber);
   }
 }
 
@@ -68,7 +60,7 @@ export class ParseWarningCollector {
   private readonly warningIndexes = new Map<string, number>();
 
   constructor(
-    private readonly parserName: string,
+    readonly parserName: string,
     private readonly filePath: string,
   ) {}
 
@@ -80,19 +72,16 @@ export class ParseWarningCollector {
     const key = [draft.kind, draft.context ?? "", draft.type ?? "", draft.message].join("\0");
     const existingIndex = this.warningIndexes.get(key);
     if (existingIndex !== undefined) {
-      const existing = this.warnings[existingIndex];
-      if (existing) {
-        existing.count = (existing.count ?? 1) + 1;
-      }
+      this.warnings[existingIndex].count = (this.warnings[existingIndex].count ?? 1) + 1;
       return;
     }
 
     this.warningIndexes.set(key, this.warnings.length);
     this.warnings.push({
+      ...draft,
       parserName: this.parserName,
       filePath: this.filePath,
       count: 1,
-      ...draft,
     });
   }
 
@@ -127,49 +116,13 @@ export class ParseWarningCollector {
     });
   }
 
-  parseContent(
-    content: string | RawContentBlock[] | undefined,
-    skipTypes?: Set<string>,
-    lineNumber?: number,
-  ): ContentBlock[] {
-    return parseContentInternal(
-      content,
-      this.parserName,
-      skipTypes,
-      lineNumber === undefined ? undefined : this.line(lineNumber),
-    );
-  }
-
-  parseContentBlock(
-    block: RawContentBlock,
-    skipTypes?: Set<string>,
-    lineNumber?: number,
-  ): ContentBlock | undefined {
-    return parseContentBlockInternal(
-      block,
-      this.parserName,
-      skipTypes,
-      lineNumber === undefined ? undefined : this.line(lineNumber),
-    );
-  }
-
   toArray(): ParseWarning[] {
-    return this.warnings.map((warning) => ({ ...warning }));
+    return this.warnings.map((w) => ({ ...w }));
   }
 }
 
 export function readJsonlLines(jsonlPath: string): string[] {
   return fs.readFileSync(jsonlPath, "utf-8").trim().split("\n").filter(Boolean);
-}
-
-export function warnSkippedMalformedLines(
-  parserName: string,
-  malformedLines: number,
-  jsonlPath: string,
-) {
-  if (malformedLines > 0) {
-    console.warn(`[${parserName}] Skipped ${malformedLines} malformed line(s) in ${jsonlPath}`);
-  }
 }
 
 export function getFirstTextPreview(
@@ -182,16 +135,6 @@ export function getFirstTextPreview(
   }
   return firstText.text.slice(0, maxLength);
 }
-
-export function warnUnknownType(type: string, context: UnknownWarningContext, parserName: string) {
-  const key = `${context}:${type}`;
-  if (!seenUnknownTypes.has(key)) {
-    seenUnknownTypes.add(key);
-    console.warn(`[${parserName}] Unknown ${context} type: "${type}"`);
-  }
-}
-
-const KNOWN_CONTENT_TYPES = new Set<string>(CONTENT_BLOCK_TYPES);
 
 export interface RawContentBlock {
   type: string;
@@ -218,9 +161,11 @@ function stringifyJson(value: unknown): string | undefined {
 
 type ContentBlockParser = (
   block: RawContentBlock,
-  parserName: string,
-  warningSink?: ContentWarningSink,
+  collector: ParseWarningCollector,
+  lineNumber?: number,
 ) => ContentBlock | undefined;
+
+const KNOWN_CONTENT_TYPES = new Set<string>(CONTENT_BLOCK_TYPES);
 
 function isKnownContentBlockType(type: string): type is ContentBlockType {
   return KNOWN_CONTENT_TYPES.has(type);
@@ -232,15 +177,11 @@ function parseTextBlock(block: RawContentBlock): TextContentBlock | undefined {
 
 function parseToolUseBlock(
   block: RawContentBlock,
-  parserName: string,
-  warningSink?: ContentWarningSink,
+  collector: ParseWarningCollector,
+  lineNumber?: number,
 ): ToolUseContentBlock | undefined {
   if (!block.name) {
-    if (warningSink) {
-      warningSink.missingField("tool_use block missing name");
-    } else {
-      console.warn(`[${parserName}] tool_use block missing name`);
-    }
+    collector.missingField("tool_use block missing name", lineNumber);
     return undefined;
   }
 
@@ -254,18 +195,14 @@ function parseToolUseBlock(
 
 function parseToolResultBlock(
   block: RawContentBlock,
-  parserName: string,
-  warningSink?: ContentWarningSink,
+  collector: ParseWarningCollector,
+  lineNumber?: number,
 ): ToolResultContentBlock | undefined {
   const output = block.content;
   const raw = typeof output === "string" ? output : stringifyJson(output);
 
   if (raw === undefined) {
-    if (warningSink) {
-      warningSink.missingField("tool_result block missing content");
-    } else {
-      console.warn(`[${parserName}] tool_result block missing content`);
-    }
+    collector.missingField("tool_result block missing content", lineNumber);
     return undefined;
   }
 
@@ -316,41 +253,29 @@ const CONTENT_BLOCK_PARSERS = {
   document: parseDocumentBlock,
 } satisfies Record<ContentBlockType, ContentBlockParser>;
 
-function parseContentBlockInternal(
+function parseContentBlockImpl(
   block: RawContentBlock,
-  parserName: string,
+  collector: ParseWarningCollector,
   skipTypes?: Set<string>,
-  warningSink?: ContentWarningSink,
+  lineNumber?: number,
 ): ContentBlock | undefined {
   if (skipTypes?.has(block.type)) {
     return undefined;
   }
 
   if (isKnownContentBlockType(block.type)) {
-    return CONTENT_BLOCK_PARSERS[block.type](block, parserName, warningSink);
+    return CONTENT_BLOCK_PARSERS[block.type](block, collector, lineNumber);
   }
 
-  if (warningSink) {
-    warningSink.unknownType(block.type, "content block");
-  } else {
-    warnUnknownType(block.type, "content block", parserName);
-  }
+  collector.unknownType(block.type, "content block", lineNumber);
   return undefined;
 }
 
-export function parseContentBlock(
-  block: RawContentBlock,
-  parserName: string,
-  skipTypes?: Set<string>,
-): ContentBlock | undefined {
-  return parseContentBlockInternal(block, parserName, skipTypes);
-}
-
-function parseContentInternal(
+function parseContentImpl(
   content: string | RawContentBlock[] | undefined,
-  parserName: string,
+  collector: ParseWarningCollector,
   skipTypes?: Set<string>,
-  warningSink?: ContentWarningSink,
+  lineNumber?: number,
 ): ContentBlock[] {
   if (!content) {
     return [];
@@ -362,7 +287,7 @@ function parseContentInternal(
 
   const blocks: ContentBlock[] = [];
   for (const block of content) {
-    const parsed = parseContentBlockInternal(block, parserName, skipTypes, warningSink);
+    const parsed = parseContentBlockImpl(block, collector, skipTypes, lineNumber);
     if (parsed) {
       blocks.push(parsed);
     }
@@ -370,10 +295,19 @@ function parseContentInternal(
   return blocks;
 }
 
-export function parseContent(
-  content: string | RawContentBlock[] | undefined,
+/**
+ * Standalone content-block parse with warnings replayed to console.warn.
+ * For session parsing, use ParseWarningCollector.line(n).parseContentBlock() instead.
+ */
+export function parseContentBlock(
+  block: RawContentBlock,
   parserName: string,
   skipTypes?: Set<string>,
-): ContentBlock[] {
-  return parseContentInternal(content, parserName, skipTypes);
+): ContentBlock | undefined {
+  const collector = new ParseWarningCollector(parserName, "");
+  const result = parseContentBlockImpl(block, collector, skipTypes);
+  for (const w of collector.toArray()) {
+    console.warn(w.message);
+  }
+  return result;
 }

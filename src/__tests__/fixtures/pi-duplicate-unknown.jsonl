@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"pi-dup-unknown","timestamp":"2026-03-15T20:09:38.000Z","cwd":"/home/user/project"}
+{"type":"message","id":"u0000001","parentId":null,"timestamp":"2026-03-15T20:10:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Hello"}]}}
+{"type":"custom","id":"custom1","timestamp":"2026-03-15T20:10:05.000Z","payload":{"ok":true}}
+{"type":"custom","id":"custom2","timestamp":"2026-03-15T20:10:06.000Z","payload":{"ok":false}}
+{"type":"custom","id":"custom3","timestamp":"2026-03-15T20:10:07.000Z","payload":{"ok":true}}
+{"type":"message","id":"a0000001","parentId":"u0000001","timestamp":"2026-03-15T20:10:10.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi"}],"model":"gpt-5.4"}}

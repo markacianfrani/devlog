@@ -97,10 +97,13 @@ export function formatIndexedTarget(filePath: string, archiveDir: string) {
 }
 
 export function formatParseWarning(warning: ParseWarning) {
-  const location = `${warning.filePath}${warning.lineNumber ? `:${warning.lineNumber}` : ""}`;
+  const location = `${warning.filePath}${warning.lineNumber !== undefined ? `:${warning.lineNumber}` : ""}`;
   const linkedLocation = terminalLink(location, pathToFileURL(warning.filePath).href);
-  const count = warning.count && warning.count > 1 ? ` (${warning.count} occurrences)` : "";
-  return `${warning.message}${count}\n  file: ${linkedLocation}`;
+  const countSuffix =
+    warning.count !== undefined && warning.count > 1 && warning.kind !== "malformed-lines"
+      ? ` (${warning.count} occurrences)`
+      : "";
+  return `${warning.message}${countSuffix}\n  file: ${linkedLocation}`;
 }
 
 export class ProgressReporter {

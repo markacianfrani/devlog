@@ -126,6 +126,8 @@ export interface PrLink {
   timestamp: string;
 }
 
+export type UnknownWarningContext = "record" | "content block";
+
 export type ParseWarningKind =
   | "malformed-lines"
   | "missing-field"
@@ -139,7 +141,7 @@ export interface ParseWarning {
   filePath: string;
   lineNumber?: number;
   count?: number;
-  context?: "record" | "content block";
+  context?: UnknownWarningContext;
   type?: string;
 }
 

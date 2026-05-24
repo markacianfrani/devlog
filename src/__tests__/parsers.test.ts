@@ -3,10 +3,12 @@ import path from "node:path";
 import { parseClaudeSession } from "../parsers/claude.ts";
 import { parseOpenCodeSession } from "../parsers/opencode.ts";
 import { parsePiSession } from "../parsers/pi.ts";
-import { parseContentBlock } from "../parsers/shared.ts";
+import { parseContentBlock, ParseWarningCollector } from "../parsers/shared.ts";
+import { formatParseWarning } from "../progress.ts";
 import type {
   ParseOutcome,
   ParseResult,
+  ParseWarning,
   TextContentBlock,
   ThinkingContentBlock,
   ToolResultContentBlock,
@@ -523,6 +525,31 @@ describe("Pi parser", () => {
     ]);
   });
 
+  test("produces no warnings for well-formed sessions", async () => {
+    const outcome = await parsePiSession(
+      path.join(FIXTURES_DIR, "pi-simple.jsonl"),
+      "test-project",
+    );
+    expectParsed(outcome);
+    expect(outcome.warnings).toEqual([]);
+  });
+
+  test("coalesces repeated unknown record types into count > 1", async () => {
+    const filePath = path.join(FIXTURES_DIR, "pi-duplicate-unknown.jsonl");
+    const outcome = await parsePiSession(filePath, "test-project");
+    expectParsed(outcome);
+
+    const unknownWarnings = outcome.warnings.filter((w) => w.kind === "unknown-record-type");
+    expect(unknownWarnings).toHaveLength(1);
+    expect(unknownWarnings[0]).toEqual(
+      expect.objectContaining({
+        type: "custom",
+        count: 3,
+        lineNumber: 3,
+      }),
+    );
+  });
+
   test("silently skips pi thinking_level_change records", async () => {
     const originalWarn = console.warn;
     const warnings: string[] = [];
@@ -702,7 +729,7 @@ describe("shared parser helpers", () => {
     });
   });
 
-  test("warns once for unknown content block types", () => {
+  test("warns for each unknown content block type via public API", () => {
     const originalWarn = console.warn;
     const warnings: string[] = [];
     console.warn = (...args: unknown[]) => {
@@ -718,10 +745,45 @@ describe("shared parser helpers", () => {
       ).toBeUndefined();
       expect(warnings).toEqual([
         '[test-parser] Unknown content block type: "shared-test-unknown-block"',
+        '[test-parser] Unknown content block type: "shared-test-unknown-block"',
       ]);
     } finally {
       console.warn = originalWarn;
     }
+  });
+
+  test("deduplicates identical warnings within a collector", () => {
+    const collector = new ParseWarningCollector("test-parser", "test.jsonl");
+    const line1 = collector.line(1);
+    const line5 = collector.line(5);
+    const line10 = collector.line(10);
+
+    line1.unknownType("some-type", "record");
+    line5.unknownType("some-type", "record");
+    line10.unknownType("other-type", "record");
+
+    const warnings = collector.toArray();
+    expect(warnings).toHaveLength(2);
+
+    // First occurrence lineNumber is preserved, count incremented
+    expect(warnings[0]).toEqual(
+      expect.objectContaining({
+        kind: "unknown-record-type",
+        type: "some-type",
+        count: 2,
+        lineNumber: 1,
+      }),
+    );
+
+    // Different type gets its own entry
+    expect(warnings[1]).toEqual(
+      expect.objectContaining({
+        kind: "unknown-record-type",
+        type: "other-type",
+        count: 1,
+        lineNumber: 10,
+      }),
+    );
   });
 
   test("skips configured content block types without warning", () => {
@@ -742,5 +804,50 @@ describe("shared parser helpers", () => {
     } finally {
       console.warn = originalWarn;
     }
+  });
+});
+
+describe("formatParseWarning", () => {
+  test("omits count suffix for malformed-lines (avoids double-count)", () => {
+    const warning: ParseWarning = {
+      kind: "malformed-lines",
+      parserName: "claude-parser",
+      message: "[claude-parser] Skipped 5 malformed line(s)",
+      filePath: "/test/file.jsonl",
+      count: 5,
+    };
+    const formatted = formatParseWarning(warning);
+    expect(formatted).not.toContain("occurrences");
+    expect(formatted).toContain("Skipped 5 malformed line(s)");
+  });
+
+  test("includes count suffix for coalesced unknown-type warnings", () => {
+    const warning: ParseWarning = {
+      kind: "unknown-record-type",
+      parserName: "pi-parser",
+      message: '[pi-parser] Unknown record type: "custom"',
+      filePath: "/test/file.jsonl",
+      lineNumber: 3,
+      count: 4,
+      context: "record",
+      type: "custom",
+    };
+    const formatted = formatParseWarning(warning);
+    expect(formatted).toContain("(4 occurrences)");
+  });
+
+  test("omits count suffix when count is 1", () => {
+    const warning: ParseWarning = {
+      kind: "unknown-record-type",
+      parserName: "pi-parser",
+      message: '[pi-parser] Unknown record type: "custom"',
+      filePath: "/test/file.jsonl",
+      lineNumber: 2,
+      count: 1,
+      context: "record",
+      type: "custom",
+    };
+    const formatted = formatParseWarning(warning);
+    expect(formatted).not.toContain("occurrences");
   });
 });

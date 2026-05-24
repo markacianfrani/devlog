@@ -139,7 +139,7 @@ export interface ParseWarning {
   filePath: string;
   lineNumber?: number;
   count?: number;
-  context?: string;
+  context?: "record" | "content block";
   type?: string;
 }
 
@@ -147,6 +147,10 @@ export interface ParseResult {
   meta: SessionMeta;
   messages: CleanMessage[];
   prLinks: PrLink[];
+}
+
+export interface ParseOutcome {
+  result?: ParseResult;
   warnings: ParseWarning[];
 }
 
@@ -189,7 +193,6 @@ export interface ParseResultDraft {
   meta: SessionMetaDraft;
   messages: CleanMessage[];
   prLinks: PrLink[];
-  warnings?: ParseWarning[];
 }
 
 function isNonEmptyString(value: string | undefined): value is string {
@@ -317,5 +320,5 @@ export function finalizeParseResult(draft: ParseResultDraft): ParseResult | unde
   }
 
   const prLinks = draft.prLinks.filter((link) => link.sessionId === meta.id);
-  return { meta, messages, prLinks, warnings: draft.warnings ?? [] };
+  return { meta, messages, prLinks };
 }

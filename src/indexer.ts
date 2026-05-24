@@ -10,7 +10,7 @@ import {
 import { parseClaudeSession } from "./parsers/claude.ts";
 import { parseOpenCodeSession } from "./parsers/opencode.ts";
 import { parsePiSession } from "./parsers/pi.ts";
-import type { ParseResult, ParseWarning } from "./parsers/types.ts";
+import type { ParseOutcome, ParseResult, ParseWarning } from "./parsers/types.ts";
 
 export interface IndexFailure {
   filePath: string;
@@ -251,27 +251,28 @@ export async function indexSession(
     return { indexed: false, messageCount: 0, warnings: 0 };
   }
 
-  let result: ParseResult | undefined;
+  let outcome: ParseOutcome;
   if (source === "claude") {
-    result = await parseClaudeSession(jsonlPath, project);
+    outcome = await parseClaudeSession(jsonlPath, project);
   } else if (source === "opencode") {
-    result = await parseOpenCodeSession(jsonlPath, project);
+    outcome = await parseOpenCodeSession(jsonlPath, project);
   } else {
-    result = await parsePiSession(jsonlPath, project);
+    outcome = await parsePiSession(jsonlPath, project);
   }
 
-  if (!result) {
-    return { indexed: false, messageCount: 0, warnings: 0 };
-  }
-
-  for (const warning of result.warnings) {
+  for (const warning of outcome.warnings) {
     onWarning?.(warning);
+  }
+
+  let result = outcome.result;
+  if (!result) {
+    return { indexed: false, messageCount: 0, warnings: outcome.warnings.length };
   }
 
   result = redactForIndexing(result, redactionContext);
 
   if (result.messages.length === 0) {
-    return { indexed: false, messageCount: 0, warnings: result.warnings.length };
+    return { indexed: false, messageCount: 0, warnings: outcome.warnings.length };
   }
 
   db.exec("BEGIN TRANSACTION");
@@ -289,7 +290,7 @@ export async function indexSession(
     throw err;
   }
 
-  return { indexed: true, messageCount: result.messages.length, warnings: result.warnings.length };
+  return { indexed: true, messageCount: result.messages.length, warnings: outcome.warnings.length };
 }
 
 function findJsonlFiles(dir: string): string[] {

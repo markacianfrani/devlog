@@ -5,6 +5,7 @@ import { parseOpenCodeSession } from "../parsers/opencode.ts";
 import { parsePiSession } from "../parsers/pi.ts";
 import { parseContentBlock } from "../parsers/shared.ts";
 import type {
+  ParseOutcome,
   ParseResult,
   TextContentBlock,
   ThinkingContentBlock,
@@ -39,12 +40,12 @@ async function withEnv<T>(
   }
 }
 
-function expectParsed(result: ParseResult | undefined): ParseResult {
-  expect(result).toBeDefined();
-  if (!result) {
+function expectParsed(outcome: ParseOutcome): ParseResult {
+  expect(outcome.result).toBeDefined();
+  if (!outcome.result) {
     throw new Error("Expected parser to return a result");
   }
-  return result;
+  return outcome.result;
 }
 
 describe("Claude parser", () => {
@@ -486,15 +487,35 @@ describe("Pi parser", () => {
 
   test("returns structured warnings for unknown pi record types", async () => {
     const filePath = path.join(FIXTURES_DIR, "pi-unknown-record.jsonl");
-    const result = expectParsed(await parsePiSession(filePath, "test-project"));
+    const outcome = await parsePiSession(filePath, "test-project");
+    expectParsed(outcome);
 
-    expect(result.warnings).toEqual([
+    expect(outcome.warnings).toEqual([
       expect.objectContaining({
         kind: "unknown-record-type",
         parserName: "pi-parser",
         message: '[pi-parser] Unknown record type: "custom"',
         filePath,
         lineNumber: 3,
+        count: 1,
+        context: "record",
+        type: "custom",
+      }),
+    ]);
+  });
+
+  test("returns warnings even when no parse result can be finalized", async () => {
+    const filePath = path.join(FIXTURES_DIR, "pi-warning-only.jsonl");
+    const outcome = await parsePiSession(filePath, "test-project");
+
+    expect(outcome.result).toBeUndefined();
+    expect(outcome.warnings).toEqual([
+      expect.objectContaining({
+        kind: "unknown-record-type",
+        parserName: "pi-parser",
+        message: '[pi-parser] Unknown record type: "custom"',
+        filePath,
+        lineNumber: 2,
         count: 1,
         context: "record",
         type: "custom",

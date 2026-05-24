@@ -1,10 +1,9 @@
 import {
   getFirstTextPreview,
   isObjectRecord,
-  parseContentBlock,
   ParseWarningCollector,
   readJsonlLines,
-  warnUnknownType,
+  type ParseLineContext,
   type RawContentBlock,
 } from "./shared.ts";
 import {
@@ -14,7 +13,7 @@ import {
   type CleanMessage,
   type ContentBlock,
   type ImageContentBlock,
-  type ParseResult,
+  type ParseOutcome,
   type UserContentBlock,
 } from "./types.ts";
 
@@ -127,9 +126,7 @@ function isPiMessageRole(role: string | undefined): role is "user" | "assistant"
 
 function parsePiContent(
   content: string | PiRawContentBlock[] | undefined,
-  parserName: string,
-  warnings: ParseWarningCollector,
-  lineNumber: number,
+  lineContext: ParseLineContext,
 ): ContentBlock[] {
   if (!content) {
     return [];
@@ -147,7 +144,7 @@ function parsePiContent(
 
     if (block.type === "toolCall") {
       if (!block.name) {
-        warnings.missingField("toolCall block missing name", lineNumber);
+        lineContext.missingField("toolCall block missing name");
         continue;
       }
 
@@ -168,7 +165,7 @@ function parsePiContent(
       continue;
     }
 
-    const parsed = parseContentBlock(block, parserName, undefined, warnings, lineNumber);
+    const parsed = lineContext.parseContentBlock(block);
     if (parsed) {
       blocks.push(parsed);
     }
@@ -180,8 +177,7 @@ function parsePiContent(
 function buildPiToolResultContent(
   content: string | PiRawContentBlock[] | undefined,
   toolUseId: string | undefined,
-  warnings: ParseWarningCollector,
-  lineNumber: number,
+  lineContext: ParseLineContext,
 ): UserContentBlock[] {
   const idFields = toolUseId ? { toolUseId } : {};
 
@@ -204,7 +200,7 @@ function buildPiToolResultContent(
     } else if (block.type === "image") {
       images.push({ type: "image", mediaType: block.mimeType });
     } else if (block.type !== "thinking") {
-      warnUnknownType(block.type, "content block", "pi-parser", warnings, lineNumber);
+      lineContext.unknownType(block.type, "content block");
     }
   }
 
@@ -311,17 +307,11 @@ function buildPiMessage(
 function parsePiMessageContent(
   entry: PiGenericEntry,
   role: "user" | "assistant" | "toolResult",
-  warnings: ParseWarningCollector,
-  lineNumber: number,
+  lineContext: ParseLineContext,
 ) {
   return role === "toolResult"
-    ? buildPiToolResultContent(
-        entry.message?.content,
-        entry.message?.toolCallId,
-        warnings,
-        lineNumber,
-      )
-    : parsePiContent(entry.message?.content, "pi-parser", warnings, lineNumber);
+    ? buildPiToolResultContent(entry.message?.content, entry.message?.toolCallId, lineContext)
+    : parsePiContent(entry.message?.content, lineContext);
 }
 
 function hasPiUsage(entry: PiGenericEntry): boolean {
@@ -394,8 +384,7 @@ function buildPiSummaryMessage(
 function parsePiEntry(
   line: string,
   state: SessionState,
-  warnings: ParseWarningCollector,
-  lineNumber: number,
+  lineContext: ParseLineContext,
 ): { malformed: boolean; message?: CleanMessage } {
   const entry = parsePiJsonLine(line);
   if (!entry) {
@@ -430,12 +419,12 @@ function parsePiEntry(
 
   if (!isPiMessageEntry(entry) || !isPiMessageRole(entry.message?.role)) {
     if (entry.type && !KNOWN_TYPES.has(entry.type)) {
-      warnUnknownType(entry.type, "record", "pi-parser", warnings, lineNumber);
+      lineContext.unknownType(entry.type, "record");
     }
     return { malformed: false };
   }
 
-  const parsedContent = parsePiMessageContent(entry, entry.message.role, warnings, lineNumber);
+  const parsedContent = parsePiMessageContent(entry, entry.message.role, lineContext);
   updateStateFromEntry(state, entry, parsedContent);
 
   if (parsedContent.length === 0 && !hasPiUsage(entry)) {
@@ -448,10 +437,7 @@ function parsePiEntry(
   };
 }
 
-export async function parsePiSession(
-  jsonlPath: string,
-  project: string,
-): Promise<ParseResult | undefined> {
+export async function parsePiSession(jsonlPath: string, project: string): Promise<ParseOutcome> {
   const lines = readJsonlLines(jsonlPath);
 
   const messages: CleanMessage[] = [];
@@ -460,8 +446,8 @@ export async function parsePiSession(
   let malformedLines = 0;
 
   for (const [index, line] of lines.entries()) {
-    const lineNumber = index + 1;
-    const result = parsePiEntry(line, state, warnings, lineNumber);
+    const lineContext = warnings.line(index + 1);
+    const result = parsePiEntry(line, state, lineContext);
     if (result.malformed) {
       malformedLines++;
       continue;
@@ -473,7 +459,7 @@ export async function parsePiSession(
 
   warnings.malformedLines(malformedLines);
 
-  return finalizeParseResult({
+  const result = finalizeParseResult({
     meta: {
       id: state.sessionId,
       source: "pi",
@@ -487,6 +473,7 @@ export async function parsePiSession(
     },
     messages,
     prLinks: [],
-    warnings: warnings.toArray(),
   });
+
+  return { result, warnings: warnings.toArray() };
 }

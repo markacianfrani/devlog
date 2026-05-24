@@ -1,10 +1,9 @@
 import {
   getFirstTextPreview,
   isObjectRecord,
-  parseContent,
   ParseWarningCollector,
   readJsonlLines,
-  warnUnknownType,
+  type ParseLineContext,
   type RawContentBlock,
 } from "./shared.ts";
 import {
@@ -15,7 +14,7 @@ import {
   isUserContentBlock,
   type CleanMessage,
   type ContentBlock,
-  type ParseResult,
+  type ParseOutcome,
 } from "./types.ts";
 
 const KNOWN_TYPES = new Set<string>(MESSAGE_ROLES);
@@ -74,14 +73,10 @@ function parseOpenCodeJsonLine(line: string): OpenCodeRecord | undefined {
   }
 }
 
-function shouldSkipOpenCodeRecord(
-  record: OpenCodeRecord,
-  warnings: ParseWarningCollector,
-  lineNumber: number,
-): boolean {
+function shouldSkipOpenCodeRecord(record: OpenCodeRecord, lineContext: ParseLineContext): boolean {
   if (record.type !== "user" && record.type !== "assistant") {
     if (!KNOWN_TYPES.has(record.type)) {
-      warnUnknownType(record.type, "record", "opencode-parser", warnings, lineNumber);
+      lineContext.unknownType(record.type, "record");
     }
     return true;
   }
@@ -157,7 +152,7 @@ function buildOpenCodeMessage(
 export async function parseOpenCodeSession(
   jsonlPath: string,
   project: string,
-): Promise<ParseResult | undefined> {
+): Promise<ParseOutcome> {
   const lines = readJsonlLines(jsonlPath);
 
   const messages: CleanMessage[] = [];
@@ -166,24 +161,18 @@ export async function parseOpenCodeSession(
   let malformedLines = 0;
 
   for (const [index, line] of lines.entries()) {
-    const lineNumber = index + 1;
+    const lineContext = warnings.line(index + 1);
     const record = parseOpenCodeJsonLine(line);
     if (!record) {
       malformedLines++;
       continue;
     }
 
-    if (shouldSkipOpenCodeRecord(record, warnings, lineNumber)) {
+    if (shouldSkipOpenCodeRecord(record, lineContext)) {
       continue;
     }
 
-    const contentBlocks = parseContent(
-      record.message?.content,
-      "opencode-parser",
-      undefined,
-      warnings,
-      lineNumber,
-    );
+    const contentBlocks = lineContext.parseContent(record.message?.content);
     if (contentBlocks.length === 0) {
       continue;
     }
@@ -197,7 +186,7 @@ export async function parseOpenCodeSession(
 
   warnings.malformedLines(malformedLines);
 
-  return finalizeParseResult({
+  const result = finalizeParseResult({
     meta: {
       id: state.sessionId,
       source: "opencode",
@@ -210,6 +199,7 @@ export async function parseOpenCodeSession(
     },
     messages,
     prLinks: [],
-    warnings: warnings.toArray(),
   });
+
+  return { result, warnings: warnings.toArray() };
 }

@@ -1,10 +1,9 @@
 import path from "node:path";
 import {
   isObjectRecord,
-  parseContent,
   ParseWarningCollector,
   readJsonlLines,
-  warnUnknownType,
+  type ParseLineContext,
   type RawContentBlock,
 } from "./shared.ts";
 import {
@@ -16,7 +15,7 @@ import {
   isUserContentBlock,
   type CleanMessage,
   type ContentBlock,
-  type ParseResult,
+  type ParseOutcome,
   type PrLink,
   type WorktreeInfo,
 } from "./types.ts";
@@ -153,8 +152,7 @@ function parseClaudeJsonLine(line: string): ClaudeRecord | undefined {
 function classifyClaudeRecord(
   record: ClaudeRecord,
   state: SessionState,
-  warnings: ParseWarningCollector,
-  lineNumber: number,
+  lineContext: ParseLineContext,
 ): "skip" | "process" {
   if (record.type === "summary" && record.summary) {
     setTitle(state, "summary", record.summary);
@@ -177,7 +175,7 @@ function classifyClaudeRecord(
   }
   if (record.type !== "user" && record.type !== "assistant") {
     if (!KNOWN_TYPES.has(record.type)) {
-      warnUnknownType(record.type, "record", "claude-parser", warnings, lineNumber);
+      lineContext.unknownType(record.type, "record");
     }
     return "skip";
   }
@@ -249,7 +247,7 @@ function collectPrLink(record: ClaudeRecord, prLinkMap: Map<string, PrLink>): vo
 export async function parseClaudeSession(
   jsonlPath: string,
   project: string,
-): Promise<ParseResult | undefined> {
+): Promise<ParseOutcome> {
   const lines = readJsonlLines(jsonlPath);
 
   const messageMap = new Map<string, CleanMessage>();
@@ -260,7 +258,7 @@ export async function parseClaudeSession(
   let malformedLines = 0;
 
   for (const [index, line] of lines.entries()) {
-    const lineNumber = index + 1;
+    const lineContext = warnings.line(index + 1);
     const record = parseClaudeJsonLine(line);
     if (!record) {
       malformedLines++;
@@ -272,19 +270,13 @@ export async function parseClaudeSession(
       continue;
     }
 
-    if (classifyClaudeRecord(record, state, warnings, lineNumber) === "skip") {
+    if (classifyClaudeRecord(record, state, lineContext) === "skip") {
       continue;
     }
 
     updateSessionState(state, record);
 
-    const contentBlocks = parseContent(
-      record.message?.content,
-      "claude-parser",
-      undefined,
-      warnings,
-      lineNumber,
-    );
+    const contentBlocks = lineContext.parseContent(record.message?.content);
     const usage = record.message?.usage;
     const hasUsage = (usage?.input_tokens ?? 0) > 0 || (usage?.output_tokens ?? 0) > 0;
     if (contentBlocks.length === 0 && !hasUsage) {
@@ -309,7 +301,7 @@ export async function parseClaudeSession(
 
   warnings.malformedLines(malformedLines);
 
-  return finalizeParseResult({
+  const result = finalizeParseResult({
     meta: {
       id: state.sessionId,
       source: "claude",
@@ -324,6 +316,7 @@ export async function parseClaudeSession(
     },
     messages,
     prLinks: [...prLinkMap.values()],
-    warnings: warnings.toArray(),
   });
+
+  return { result, warnings: warnings.toArray() };
 }

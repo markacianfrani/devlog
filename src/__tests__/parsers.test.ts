@@ -484,6 +484,24 @@ describe("Pi parser", () => {
     expect(text).toContain("Subagent finished: here is the synthesized finding.");
   });
 
+  test("returns structured warnings for unknown pi record types", async () => {
+    const filePath = path.join(FIXTURES_DIR, "pi-unknown-record.jsonl");
+    const result = expectParsed(await parsePiSession(filePath, "test-project"));
+
+    expect(result.warnings).toEqual([
+      expect.objectContaining({
+        kind: "unknown-record-type",
+        parserName: "pi-parser",
+        message: '[pi-parser] Unknown record type: "custom"',
+        filePath,
+        lineNumber: 3,
+        count: 1,
+        context: "record",
+        type: "custom",
+      }),
+    ]);
+  });
+
   test("silently skips pi thinking_level_change records", async () => {
     const originalWarn = console.warn;
     const warnings: string[] = [];

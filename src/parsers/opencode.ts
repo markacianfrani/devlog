@@ -2,8 +2,8 @@ import {
   getFirstTextPreview,
   isObjectRecord,
   parseContent,
+  ParseWarningCollector,
   readJsonlLines,
-  warnSkippedMalformedLines,
   warnUnknownType,
   type RawContentBlock,
 } from "./shared.ts";
@@ -74,10 +74,14 @@ function parseOpenCodeJsonLine(line: string): OpenCodeRecord | undefined {
   }
 }
 
-function shouldSkipOpenCodeRecord(record: OpenCodeRecord): boolean {
+function shouldSkipOpenCodeRecord(
+  record: OpenCodeRecord,
+  warnings: ParseWarningCollector,
+  lineNumber: number,
+): boolean {
   if (record.type !== "user" && record.type !== "assistant") {
     if (!KNOWN_TYPES.has(record.type)) {
-      warnUnknownType(record.type, "record", "opencode-parser");
+      warnUnknownType(record.type, "record", "opencode-parser", warnings, lineNumber);
     }
     return true;
   }
@@ -158,20 +162,28 @@ export async function parseOpenCodeSession(
 
   const messages: CleanMessage[] = [];
   const state: SessionState = {};
+  const warnings = new ParseWarningCollector("opencode-parser", jsonlPath);
   let malformedLines = 0;
 
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
+    const lineNumber = index + 1;
     const record = parseOpenCodeJsonLine(line);
     if (!record) {
       malformedLines++;
       continue;
     }
 
-    if (shouldSkipOpenCodeRecord(record)) {
+    if (shouldSkipOpenCodeRecord(record, warnings, lineNumber)) {
       continue;
     }
 
-    const contentBlocks = parseContent(record.message?.content, "opencode-parser");
+    const contentBlocks = parseContent(
+      record.message?.content,
+      "opencode-parser",
+      undefined,
+      warnings,
+      lineNumber,
+    );
     if (contentBlocks.length === 0) {
       continue;
     }
@@ -183,7 +195,7 @@ export async function parseOpenCodeSession(
     }
   }
 
-  warnSkippedMalformedLines("opencode-parser", malformedLines, jsonlPath);
+  warnings.malformedLines(malformedLines);
 
   return finalizeParseResult({
     meta: {
@@ -198,5 +210,6 @@ export async function parseOpenCodeSession(
     },
     messages,
     prLinks: [],
+    warnings: warnings.toArray(),
   });
 }

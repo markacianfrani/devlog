@@ -2,6 +2,8 @@ import fs from "node:fs";
 import type {
   ContentBlock,
   ContentBlockType,
+  ParseWarning,
+  ParseWarningKind,
   DocumentContentBlock,
   ImageContentBlock,
   RedactedThinkingContentBlock,
@@ -13,6 +15,80 @@ import type {
 import { CONTENT_BLOCK_TYPES } from "./types.ts";
 
 const seenUnknownTypes = new Set<string>();
+
+interface WarningDraft {
+  kind: ParseWarningKind;
+  message: string;
+  lineNumber?: number;
+  count?: number;
+  context?: string;
+  type?: string;
+}
+
+export class ParseWarningCollector {
+  private readonly warnings: ParseWarning[] = [];
+  private readonly warningIndexes = new Map<string, number>();
+
+  constructor(
+    private readonly parserName: string,
+    private readonly filePath: string,
+  ) {}
+
+  add(draft: WarningDraft): void {
+    const key = [draft.kind, draft.context ?? "", draft.type ?? "", draft.message].join("\0");
+    const existingIndex = this.warningIndexes.get(key);
+    if (existingIndex !== undefined) {
+      const existing = this.warnings[existingIndex];
+      if (existing) {
+        existing.count = (existing.count ?? 1) + 1;
+      }
+      return;
+    }
+
+    this.warningIndexes.set(key, this.warnings.length);
+    this.warnings.push({
+      parserName: this.parserName,
+      filePath: this.filePath,
+      count: 1,
+      ...draft,
+    });
+  }
+
+  unknownType(type: string, context: string, lineNumber?: number): void {
+    const kind = `unknown-${context.replaceAll(" ", "-")}-type` as ParseWarningKind;
+    this.add({
+      kind,
+      message: `[${this.parserName}] Unknown ${context} type: "${type}"`,
+      lineNumber,
+      context,
+      type,
+    });
+  }
+
+  malformedLines(count: number): void {
+    if (count <= 0) {
+      return;
+    }
+
+    this.add({
+      kind: "malformed-lines",
+      message: `[${this.parserName}] Skipped ${count} malformed line(s)`,
+      count,
+    });
+  }
+
+  missingField(message: string, lineNumber?: number): void {
+    this.add({
+      kind: "missing-field",
+      message: `[${this.parserName}] ${message}`,
+      lineNumber,
+    });
+  }
+
+  toArray(): ParseWarning[] {
+    return this.warnings.map((warning) => ({ ...warning }));
+  }
+}
 
 export function readJsonlLines(jsonlPath: string): string[] {
   return fs.readFileSync(jsonlPath, "utf-8").trim().split("\n").filter(Boolean);
@@ -39,7 +115,18 @@ export function getFirstTextPreview(
   return firstText.text.slice(0, maxLength);
 }
 
-export function warnUnknownType(type: string, context: string, parserName: string) {
+export function warnUnknownType(
+  type: string,
+  context: string,
+  parserName: string,
+  collector?: ParseWarningCollector,
+  lineNumber?: number,
+) {
+  if (collector) {
+    collector.unknownType(type, context, lineNumber);
+    return;
+  }
+
   const key = `${context}:${type}`;
   if (!seenUnknownTypes.has(key)) {
     seenUnknownTypes.add(key);
@@ -72,7 +159,12 @@ function stringifyJson(value: unknown): string | undefined {
   return JSON.stringify(value);
 }
 
-type ContentBlockParser = (block: RawContentBlock, parserName: string) => ContentBlock | undefined;
+type ContentBlockParser = (
+  block: RawContentBlock,
+  parserName: string,
+  collector?: ParseWarningCollector,
+  lineNumber?: number,
+) => ContentBlock | undefined;
 
 function isKnownContentBlockType(type: string): type is ContentBlockType {
   return KNOWN_CONTENT_TYPES.has(type);
@@ -85,9 +177,15 @@ function parseTextBlock(block: RawContentBlock): TextContentBlock | undefined {
 function parseToolUseBlock(
   block: RawContentBlock,
   parserName: string,
+  collector?: ParseWarningCollector,
+  lineNumber?: number,
 ): ToolUseContentBlock | undefined {
   if (!block.name) {
-    console.warn(`[${parserName}] tool_use block missing name`);
+    if (collector) {
+      collector.missingField("tool_use block missing name", lineNumber);
+    } else {
+      console.warn(`[${parserName}] tool_use block missing name`);
+    }
     return undefined;
   }
 
@@ -102,12 +200,18 @@ function parseToolUseBlock(
 function parseToolResultBlock(
   block: RawContentBlock,
   parserName: string,
+  collector?: ParseWarningCollector,
+  lineNumber?: number,
 ): ToolResultContentBlock | undefined {
   const output = block.content;
   const raw = typeof output === "string" ? output : stringifyJson(output);
 
   if (raw === undefined) {
-    console.warn(`[${parserName}] tool_result block missing content`);
+    if (collector) {
+      collector.missingField("tool_result block missing content", lineNumber);
+    } else {
+      console.warn(`[${parserName}] tool_result block missing content`);
+    }
     return undefined;
   }
 
@@ -162,16 +266,18 @@ export function parseContentBlock(
   block: RawContentBlock,
   parserName: string,
   skipTypes?: Set<string>,
+  collector?: ParseWarningCollector,
+  lineNumber?: number,
 ): ContentBlock | undefined {
   if (skipTypes?.has(block.type)) {
     return undefined;
   }
 
   if (isKnownContentBlockType(block.type)) {
-    return CONTENT_BLOCK_PARSERS[block.type](block, parserName);
+    return CONTENT_BLOCK_PARSERS[block.type](block, parserName, collector, lineNumber);
   }
 
-  warnUnknownType(block.type, "content block", parserName);
+  warnUnknownType(block.type, "content block", parserName, collector, lineNumber);
   return undefined;
 }
 
@@ -179,6 +285,8 @@ export function parseContent(
   content: string | RawContentBlock[] | undefined,
   parserName: string,
   skipTypes?: Set<string>,
+  collector?: ParseWarningCollector,
+  lineNumber?: number,
 ): ContentBlock[] {
   if (!content) {
     return [];
@@ -190,7 +298,7 @@ export function parseContent(
 
   const blocks: ContentBlock[] = [];
   for (const block of content) {
-    const parsed = parseContentBlock(block, parserName, skipTypes);
+    const parsed = parseContentBlock(block, parserName, skipTypes, collector, lineNumber);
     if (parsed) {
       blocks.push(parsed);
     }

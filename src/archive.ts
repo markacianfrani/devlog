@@ -16,6 +16,7 @@ import {
   createLogger,
   DEFAULT_CLI_OPTIONS,
   formatIndexedTarget,
+  formatParseWarning,
   printArchiveSummary,
   printIndexSummary,
   ProgressReporter,
@@ -905,6 +906,9 @@ async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_CLI_OPT
       });
     },
     onIndexed() {},
+    onWarning(warning) {
+      progress.warn(formatParseWarning(warning));
+    },
     onError(event) {
       progress.warn(
         `[devlog] Failed indexing ${formatIndexedTarget(event.filePath, ARCHIVE_DIR)}: ${event.error}`,

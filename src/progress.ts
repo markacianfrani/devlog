@@ -1,5 +1,7 @@
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import readline from "node:readline";
+import type { ParseWarning } from "./parsers/types.ts";
 
 export interface CliOptions {
   verbose: boolean;
@@ -57,6 +59,14 @@ function success(text: string) {
   return ansi(32, text);
 }
 
+function terminalLink(label: string, url: string) {
+  if (!isInteractiveTerminal()) {
+    return label;
+  }
+
+  return `\u001B]8;;${url}\u0007${label}\u001B]8;;\u0007`;
+}
+
 function tint(text: string, color: number) {
   return ansi(color, text);
 }
@@ -84,6 +94,13 @@ export function formatIndexedTarget(filePath: string, archiveDir: string) {
   const source = parts[1] ?? "session";
   const session = path.basename(filePath, ".jsonl");
   return `${source}/${project}/${session}`;
+}
+
+export function formatParseWarning(warning: ParseWarning) {
+  const location = `${warning.filePath}${warning.lineNumber ? `:${warning.lineNumber}` : ""}`;
+  const linkedLocation = terminalLink(location, pathToFileURL(warning.filePath).href);
+  const count = warning.count && warning.count > 1 ? ` (${warning.count} occurrences)` : "";
+  return `${warning.message}${count}\n  file: ${linkedLocation}`;
 }
 
 export class ProgressReporter {
@@ -258,6 +275,7 @@ export function printIndexSummary(
     sessionsSkipped: number;
     messagesIndexed: number;
     errors: number;
+    warnings?: number;
   },
   dbPath: string,
   durationMs: number,
@@ -267,6 +285,9 @@ export function printIndexSummary(
     console.log(`Sessions indexed: ${stats.sessionsIndexed}`);
     console.log(`Sessions skipped: ${stats.sessionsSkipped}`);
     console.log(`Messages indexed: ${stats.messagesIndexed}`);
+    if ((stats.warnings ?? 0) > 0) {
+      console.log(`Warnings: ${stats.warnings}`);
+    }
     if (stats.errors > 0) {
       console.log(`Errors: ${stats.errors}`);
     }
@@ -286,6 +307,9 @@ export function printIndexSummary(
   );
   console.log(`${bold("Skipped")} ${stats.sessionsSkipped} unchanged`);
   console.log(`${bold("Messages")} ${stats.messagesIndexed}`);
+  if ((stats.warnings ?? 0) > 0) {
+    console.log(`${bold("Warnings")} ${stats.warnings}`);
+  }
   if (stats.errors > 0) {
     console.log(`${bold("Errors")} ${stats.errors}`);
   }

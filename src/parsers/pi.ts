@@ -2,8 +2,8 @@ import {
   getFirstTextPreview,
   isObjectRecord,
   parseContentBlock,
+  ParseWarningCollector,
   readJsonlLines,
-  warnSkippedMalformedLines,
   warnUnknownType,
   type RawContentBlock,
 } from "./shared.ts";
@@ -128,6 +128,8 @@ function isPiMessageRole(role: string | undefined): role is "user" | "assistant"
 function parsePiContent(
   content: string | PiRawContentBlock[] | undefined,
   parserName: string,
+  warnings: ParseWarningCollector,
+  lineNumber: number,
 ): ContentBlock[] {
   if (!content) {
     return [];
@@ -145,7 +147,7 @@ function parsePiContent(
 
     if (block.type === "toolCall") {
       if (!block.name) {
-        console.warn(`[${parserName}] toolCall block missing name`);
+        warnings.missingField("toolCall block missing name", lineNumber);
         continue;
       }
 
@@ -166,7 +168,7 @@ function parsePiContent(
       continue;
     }
 
-    const parsed = parseContentBlock(block, parserName);
+    const parsed = parseContentBlock(block, parserName, undefined, warnings, lineNumber);
     if (parsed) {
       blocks.push(parsed);
     }
@@ -178,6 +180,8 @@ function parsePiContent(
 function buildPiToolResultContent(
   content: string | PiRawContentBlock[] | undefined,
   toolUseId: string | undefined,
+  warnings: ParseWarningCollector,
+  lineNumber: number,
 ): UserContentBlock[] {
   const idFields = toolUseId ? { toolUseId } : {};
 
@@ -200,7 +204,7 @@ function buildPiToolResultContent(
     } else if (block.type === "image") {
       images.push({ type: "image", mediaType: block.mimeType });
     } else if (block.type !== "thinking") {
-      warnUnknownType(block.type, "content block", "pi-parser");
+      warnUnknownType(block.type, "content block", "pi-parser", warnings, lineNumber);
     }
   }
 
@@ -304,10 +308,20 @@ function buildPiMessage(
   return undefined;
 }
 
-function parsePiMessageContent(entry: PiGenericEntry, role: "user" | "assistant" | "toolResult") {
+function parsePiMessageContent(
+  entry: PiGenericEntry,
+  role: "user" | "assistant" | "toolResult",
+  warnings: ParseWarningCollector,
+  lineNumber: number,
+) {
   return role === "toolResult"
-    ? buildPiToolResultContent(entry.message?.content, entry.message?.toolCallId)
-    : parsePiContent(entry.message?.content, "pi-parser");
+    ? buildPiToolResultContent(
+        entry.message?.content,
+        entry.message?.toolCallId,
+        warnings,
+        lineNumber,
+      )
+    : parsePiContent(entry.message?.content, "pi-parser", warnings, lineNumber);
 }
 
 function hasPiUsage(entry: PiGenericEntry): boolean {
@@ -380,6 +394,8 @@ function buildPiSummaryMessage(
 function parsePiEntry(
   line: string,
   state: SessionState,
+  warnings: ParseWarningCollector,
+  lineNumber: number,
 ): { malformed: boolean; message?: CleanMessage } {
   const entry = parsePiJsonLine(line);
   if (!entry) {
@@ -414,12 +430,12 @@ function parsePiEntry(
 
   if (!isPiMessageEntry(entry) || !isPiMessageRole(entry.message?.role)) {
     if (entry.type && !KNOWN_TYPES.has(entry.type)) {
-      warnUnknownType(entry.type, "record", "pi-parser");
+      warnUnknownType(entry.type, "record", "pi-parser", warnings, lineNumber);
     }
     return { malformed: false };
   }
 
-  const parsedContent = parsePiMessageContent(entry, entry.message.role);
+  const parsedContent = parsePiMessageContent(entry, entry.message.role, warnings, lineNumber);
   updateStateFromEntry(state, entry, parsedContent);
 
   if (parsedContent.length === 0 && !hasPiUsage(entry)) {
@@ -440,10 +456,12 @@ export async function parsePiSession(
 
   const messages: CleanMessage[] = [];
   const state: SessionState = {};
+  const warnings = new ParseWarningCollector("pi-parser", jsonlPath);
   let malformedLines = 0;
 
-  for (const line of lines) {
-    const result = parsePiEntry(line, state);
+  for (const [index, line] of lines.entries()) {
+    const lineNumber = index + 1;
+    const result = parsePiEntry(line, state, warnings, lineNumber);
     if (result.malformed) {
       malformedLines++;
       continue;
@@ -453,7 +471,7 @@ export async function parsePiSession(
     }
   }
 
-  warnSkippedMalformedLines("pi-parser", malformedLines, jsonlPath);
+  warnings.malformedLines(malformedLines);
 
   return finalizeParseResult({
     meta: {
@@ -469,5 +487,6 @@ export async function parsePiSession(
     },
     messages,
     prLinks: [],
+    warnings: warnings.toArray(),
   });
 }

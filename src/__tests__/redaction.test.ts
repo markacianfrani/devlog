@@ -57,6 +57,7 @@ function makeParseResult(text: string): ParseResult {
         timestamp: "2026-01-01T00:00:00.000Z",
       },
     ],
+    warnings: [],
   };
 }
 

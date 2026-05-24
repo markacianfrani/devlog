@@ -126,10 +126,28 @@ export interface PrLink {
   timestamp: string;
 }
 
+export type ParseWarningKind =
+  | "malformed-lines"
+  | "missing-field"
+  | "unknown-content-block-type"
+  | "unknown-record-type";
+
+export interface ParseWarning {
+  kind: ParseWarningKind;
+  parserName: string;
+  message: string;
+  filePath: string;
+  lineNumber?: number;
+  count?: number;
+  context?: string;
+  type?: string;
+}
+
 export interface ParseResult {
   meta: SessionMeta;
   messages: CleanMessage[];
   prLinks: PrLink[];
+  warnings: ParseWarning[];
 }
 
 export interface MessageDraft {
@@ -171,6 +189,7 @@ export interface ParseResultDraft {
   meta: SessionMetaDraft;
   messages: CleanMessage[];
   prLinks: PrLink[];
+  warnings?: ParseWarning[];
 }
 
 function isNonEmptyString(value: string | undefined): value is string {
@@ -298,5 +317,5 @@ export function finalizeParseResult(draft: ParseResultDraft): ParseResult | unde
   }
 
   const prLinks = draft.prLinks.filter((link) => link.sessionId === meta.id);
-  return { meta, messages, prLinks };
+  return { meta, messages, prLinks, warnings: draft.warnings ?? [] };
 }

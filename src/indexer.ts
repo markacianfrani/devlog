@@ -10,7 +10,7 @@ import {
 import { parseClaudeSession } from "./parsers/claude.ts";
 import { parseOpenCodeSession } from "./parsers/opencode.ts";
 import { parsePiSession } from "./parsers/pi.ts";
-import type { ParseResult } from "./parsers/types.ts";
+import type { ParseResult, ParseWarning } from "./parsers/types.ts";
 
 export interface IndexFailure {
   filePath: string;
@@ -22,6 +22,7 @@ export interface IndexStats {
   sessionsSkipped: number;
   messagesIndexed: number;
   errors: number;
+  warnings: number;
   failures: IndexFailure[];
 }
 
@@ -37,6 +38,7 @@ export interface IndexProgressCallbacks {
   onStart?: (total: number) => void;
   onTick?: (processed: number, stats: IndexStats) => void;
   onIndexed?: (event: IndexProgressEvent) => void;
+  onWarning?: (warning: ParseWarning) => void;
   onError?: (event: IndexProgressEvent) => void;
 }
 
@@ -240,12 +242,13 @@ export async function indexSession(
   project: string,
   db: Database,
   redactionContext?: IndexRedactionContext,
-): Promise<{ indexed: boolean; messageCount: number }> {
+  onWarning?: (warning: ParseWarning) => void,
+): Promise<{ indexed: boolean; messageCount: number; warnings: number }> {
   const mtime = getMtime(jsonlPath);
   const existing = checkSession(db, jsonlPath, mtime);
 
   if (existing.sameVersion) {
-    return { indexed: false, messageCount: 0 };
+    return { indexed: false, messageCount: 0, warnings: 0 };
   }
 
   let result: ParseResult | undefined;
@@ -258,13 +261,17 @@ export async function indexSession(
   }
 
   if (!result) {
-    return { indexed: false, messageCount: 0 };
+    return { indexed: false, messageCount: 0, warnings: 0 };
+  }
+
+  for (const warning of result.warnings) {
+    onWarning?.(warning);
   }
 
   result = redactForIndexing(result, redactionContext);
 
   if (result.messages.length === 0) {
-    return { indexed: false, messageCount: 0 };
+    return { indexed: false, messageCount: 0, warnings: result.warnings.length };
   }
 
   db.exec("BEGIN TRANSACTION");
@@ -282,7 +289,7 @@ export async function indexSession(
     throw err;
   }
 
-  return { indexed: true, messageCount: result.messages.length };
+  return { indexed: true, messageCount: result.messages.length, warnings: result.warnings.length };
 }
 
 function findJsonlFiles(dir: string): string[] {
@@ -344,6 +351,7 @@ export async function indexAll(
     sessionsSkipped: 0,
     messagesIndexed: 0,
     errors: 0,
+    warnings: 0,
     failures: [],
   };
 
@@ -365,7 +373,15 @@ export async function indexAll(
     }
 
     try {
-      const result = await indexSession(filePath, info.source, info.project, db, redactionContext);
+      const result = await indexSession(
+        filePath,
+        info.source,
+        info.project,
+        db,
+        redactionContext,
+        callbacks?.onWarning,
+      );
+      stats.warnings += result.warnings;
       if (result.indexed) {
         stats.sessionsIndexed++;
         stats.messagesIndexed += result.messageCount;

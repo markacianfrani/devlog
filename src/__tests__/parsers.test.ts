@@ -14,7 +14,7 @@ import type {
   ToolResultContentBlock,
   ToolUseContentBlock,
 } from "../parsers/types.ts";
-import { redactParseResult } from "../redaction.ts";
+import { redactForIndexing } from "../redaction.ts";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures");
 
@@ -116,7 +116,7 @@ describe("Claude parser", () => {
       expect(parsedUserText).toContain("sk-proj-123456789012345678901234");
       expect(parsedUserText).toContain("literal-secret-token-12345");
 
-      const redacted = redactParseResult(parsed);
+      const redacted = redactForIndexing(parsed);
 
       const firstUserText = (redacted.messages[0].content[0] as TextContentBlock).text;
       expect(firstUserText).toContain("[REDACTED:openai-project-key]");
@@ -418,7 +418,7 @@ describe("OpenCode parser", () => {
       "github_pat_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_abc",
     );
 
-    const redacted = redactParseResult(parsed);
+    const redacted = redactForIndexing(parsed);
     const firstUserText = (redacted.messages[0].content[0] as TextContentBlock).text;
     expect(firstUserText).toBe("Use [REDACTED:github-token] for testing");
 
@@ -623,7 +623,7 @@ describe("Pi parser", () => {
     const parsedUserText = (parsed.messages[0].content[0] as TextContentBlock).text;
     expect(parsedUserText).toContain("sk-or-abcdefghijklmnopqrstuvwxyz123456");
 
-    const redacted = redactParseResult(parsed);
+    const redacted = redactForIndexing(parsed);
 
     const firstUserText = (redacted.messages[0].content[0] as TextContentBlock).text;
     expect(firstUserText).toContain("[REDACTED:openrouter-key]");

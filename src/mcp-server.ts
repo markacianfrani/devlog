@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { loadConfig } from "./config.ts";
 import { getDb, getReadonlyDb } from "./db.ts";
+import { slugFromPath } from "./sources/shared.ts";
 
 const CONFIGURED_DB_PATH = loadConfig().dbPath;
 
@@ -27,16 +28,6 @@ For project-scoped browsing:
 ## query tool
 
 Call \`schema\` first before writing raw SQL — the most common mistake is \`updated\` instead of \`updated_at\`. Do NOT call \`schema\` for search or list_sessions.`;
-
-function slugFromPath(cwdPath: string): string {
-  const segments = path
-    .resolve(cwdPath)
-    .split(path.sep)
-    .filter(Boolean)
-    .map((s) => s.replace(/[^a-zA-Z0-9]/g, "-"))
-    .join("-");
-  return `-${segments}`;
-}
 
 interface SessionRow {
   session_id: string;

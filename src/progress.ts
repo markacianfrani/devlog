@@ -111,6 +111,7 @@ export class ProgressReporter {
   private current: ProgressState | undefined;
   private lastRenderAt = 0;
   private frame = 0;
+  private pendingWarnings: string[] = [];
 
   constructor(options: CliOptions) {
     this.enabled = Boolean(process.stdout.isTTY) && !options.verbose;
@@ -158,9 +159,7 @@ export class ProgressReporter {
       return;
     }
 
-    this.clear();
-    console.warn(message);
-    this.render();
+    this.pendingWarnings.push(message);
   }
 
   end() {
@@ -179,6 +178,13 @@ export class ProgressReporter {
     this.clear();
     console.log(line);
     this.current = undefined;
+  }
+
+  flushWarnings() {
+    for (const message of this.pendingWarnings) {
+      console.warn(message);
+    }
+    this.pendingWarnings = [];
   }
 
   private render(force = false) {

@@ -259,5 +259,3 @@ export function redactForIndexing(
     redacted: true,
   };
 }
-
-export const redactParseResult = redactForIndexing;

@@ -7,7 +7,7 @@ import {
   iterateOpencodeDbSessions,
   reconstructSessionJsonl,
   slugFromPath as archiveSlugFromPath,
-} from "../archive.ts";
+} from "../sources/opencode.ts";
 import {
   ensureDir,
   runArchive,

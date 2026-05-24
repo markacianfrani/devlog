@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DEFAULTS } from "./config.ts";
 import type { ContentBlockType, MessageRole, Source } from "./parsers/types.ts";
+import { ensureDir } from "./sources/shared.ts";
 
 // Row types for database queries
 export interface SessionRow {
@@ -191,12 +192,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 	tokenize='porter'
 );
 `;
-
-function ensureDir(dirPath: string) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-  }
-}
 
 function getSchemaVersion(database: Database): number | undefined {
   const hasTable = database

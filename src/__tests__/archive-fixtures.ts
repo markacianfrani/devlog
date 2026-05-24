@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
-export const BIN_PATH = path.join(REPO_ROOT, "src", "archive.ts");
+export const BIN_PATH = path.join(REPO_ROOT, "src", "cli.ts");
 export const FIXTURES_DIR = path.join(import.meta.dir, "fixtures");
 export const WORKSPACE_HASH = "5c9dbe89c9230dfefb77d96d9a7d13853999ce23";
 

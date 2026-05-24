@@ -28,7 +28,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit",
-    "build:cli": "bun build src/archive.ts --outfile dist/cli.js --target bun",
+    "build:cli": "bun build src/cli.ts --outfile dist/cli.js --target bun",
     "prepublishOnly": "bun run build:cli",
     "typecheck": "tsc --noEmit",
     "check": "bun run lint && bun test && bun run typecheck",

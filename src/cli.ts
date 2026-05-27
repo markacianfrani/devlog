@@ -27,26 +27,6 @@ Config: ~/.config/devlog/config.json
   archiveDir        Custom archive directory
   dbPath            Custom database path`;
 
-const USAGE_TEXT = `Usage: devlog [archive|index|mcp|init|version] [--rebuild] [--verbose] [--debug]
-
-Commands:
-  archive    Archive Claude Code, opencode, and pi sessions (default)
-  index      Index archived sessions into SQLite database
-  mcp        Start the MCP server (stdio)
-  init       Set up devlog and install MCP servers
-  version    Print the installed devlog version
-
-Options:
-  --rebuild  Re-index all sessions, ignoring cache
-  --verbose  Show per-project and per-session details
-  --debug    Include noisy debug logs
-
-Config: ~/.config/devlog/config.json
-  excludeSources    Sources to skip (e.g. ["opencode"])
-  excludeProjects   Project slugs to skip (e.g. ["my-private-repo"])
-  archiveDir        Custom archive directory
-  dbPath            Custom database path`;
-
 function readVersion(): string {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
   const pkgPath = resolve(scriptDir, "..", "package.json");
@@ -62,7 +42,7 @@ async function main() {
     return;
   }
 
-  if (args.includes("--version") || args.includes("-v")) {
+  if (args.includes("--version")) {
     console.log(readVersion());
     return;
   }
@@ -103,7 +83,8 @@ async function main() {
       break;
     }
     default:
-      console.log(USAGE_TEXT);
+      console.error(`Unknown command: ${command}`);
+      console.error(`Run 'devlog --help' for usage.`);
       process.exit(1);
   }
 }

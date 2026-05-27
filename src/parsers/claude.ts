@@ -36,6 +36,7 @@ const NON_MESSAGE_TYPES = new Set([
   "last-prompt",
   "agent-name",
   "permission-mode",
+  "mode",
   "attachment",
   "worktree-state",
 ]);

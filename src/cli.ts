@@ -1,19 +1,24 @@
 #!/usr/bin/env bun
 
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type CliOptions } from "./progress.ts";
 
-const HELP_TEXT = `Usage: devlog [archive|index|mcp|init] [options]
+const HELP_TEXT = `Usage: devlog [archive|index|mcp|init|version] [options]
 
 Commands:
   archive    Archive Claude Code, opencode, and pi sessions (default)
   index      Index archived sessions into SQLite database
   mcp        Start the MCP server (stdio)
   init       Set up devlog and install MCP servers
+  version    Print the installed devlog version
 
 Options:
   --rebuild  (index only) Re-index all sessions, ignoring cache
   --verbose  Show per-project and per-session details
   --debug    Include noisy debug logs
+  --version  Print the installed devlog version
   --help     Show this help message
 
 Config: ~/.config/devlog/config.json
@@ -22,30 +27,23 @@ Config: ~/.config/devlog/config.json
   archiveDir        Custom archive directory
   dbPath            Custom database path`;
 
-const USAGE_TEXT = `Usage: devlog [archive|index|mcp|init] [--rebuild] [--verbose] [--debug]
-
-Commands:
-  archive    Archive Claude Code, opencode, and pi sessions (default)
-  index      Index archived sessions into SQLite database
-  mcp        Start the MCP server (stdio)
-  init       Set up devlog and install MCP servers
-
-Options:
-  --rebuild  Re-index all sessions, ignoring cache
-  --verbose  Show per-project and per-session details
-  --debug    Include noisy debug logs
-
-Config: ~/.config/devlog/config.json
-  excludeSources    Sources to skip (e.g. ["opencode"])
-  excludeProjects   Project slugs to skip (e.g. ["my-private-repo"])
-  archiveDir        Custom archive directory
-  dbPath            Custom database path`;
+function readVersion(): string {
+  const scriptDir = dirname(fileURLToPath(import.meta.url));
+  const pkgPath = resolve(scriptDir, "..", "package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
+  return pkg.version;
+}
 
 async function main() {
   const args = process.argv.slice(2);
 
   if (args.includes("--help") || args.includes("-h")) {
     console.log(HELP_TEXT);
+    return;
+  }
+
+  if (args.includes("--version")) {
+    console.log(readVersion());
     return;
   }
 
@@ -80,8 +78,13 @@ async function main() {
       await initMain();
       break;
     }
+    case "version": {
+      console.log(readVersion());
+      break;
+    }
     default:
-      console.log(USAGE_TEXT);
+      console.error(`Unknown command: ${command}`);
+      console.error(`Run 'devlog --help' for usage.`);
       process.exit(1);
   }
 }

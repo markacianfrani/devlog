@@ -11,9 +11,14 @@ import {
 } from "../progress.ts";
 import type { ProgressReporter } from "../progress.ts";
 import { ensureDir, slugFromPath, matchesExcludedProject } from "./shared.ts";
-import { createArchiveStats, makeSummary, type ArchiveStats } from "./types.ts";
-
-export { slugFromPath };
+import {
+  createArchiveStats,
+  logProjectRollup,
+  makeSummary,
+  recordArchived,
+  recordSkipped,
+  type ArchiveStats,
+} from "./types.ts";
 
 const config = loadConfig();
 const OPENCODE_DB_PATH = path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
@@ -289,44 +294,6 @@ export function* iterateOpencodeDbSessions(
         err instanceof Error ? err.message : err,
       );
     }
-  }
-}
-
-// ── Stats helpers ───────────────────────────────────────────────────────────
-
-function tickArchiveProgress(progress: ProgressReporter | undefined, stats: ArchiveStats) {
-  progress?.tick({ processed: stats.processed, archived: stats.archived, skipped: stats.skipped });
-}
-
-function recordArchived(stats: ArchiveStats, activity: number, progress?: ProgressReporter) {
-  stats.archived++;
-  stats.activity += activity;
-  stats.processed++;
-  tickArchiveProgress(progress, stats);
-}
-
-function recordSkipped(stats: ArchiveStats, progress?: ProgressReporter) {
-  stats.skipped++;
-  stats.processed++;
-  tickArchiveProgress(progress, stats);
-}
-
-function logProjectRollup(
-  logger: ReturnType<typeof createLogger>,
-  verbose: boolean,
-  projectSlug: string,
-  archived: number,
-  activity: number,
-  activityLabel: string,
-) {
-  if (!verbose) {
-    return;
-  }
-
-  if (archived > 0) {
-    logger.verbose(`  📊 ${projectSlug}: ${archived} new, ${activity} ${activityLabel}\n`);
-  } else {
-    logger.verbose(`  📊 ${projectSlug}: all up to date\n`);
   }
 }
 

@@ -10,7 +10,14 @@ import {
 } from "../progress.ts";
 import type { ProgressReporter } from "../progress.ts";
 import { slugFromPath, archiveConversation, matchesExcludedProject } from "./shared.ts";
-import { createArchiveStats, makeSummary, type ArchiveStats } from "./types.ts";
+import {
+  createArchiveStats,
+  logProjectRollup,
+  makeSummary,
+  recordArchived,
+  recordSkipped,
+  type ArchiveStats,
+} from "./types.ts";
 
 const config = loadConfig();
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
@@ -75,42 +82,6 @@ function countExchanges(filePath: string): number {
     return count;
   } catch {
     return 0;
-  }
-}
-
-function tickArchiveProgress(progress: ProgressReporter | undefined, stats: ArchiveStats) {
-  progress?.tick({ processed: stats.processed, archived: stats.archived, skipped: stats.skipped });
-}
-
-function recordArchived(stats: ArchiveStats, activity: number, progress?: ProgressReporter) {
-  stats.archived++;
-  stats.activity += activity;
-  stats.processed++;
-  tickArchiveProgress(progress, stats);
-}
-
-function recordSkipped(stats: ArchiveStats, progress?: ProgressReporter) {
-  stats.skipped++;
-  stats.processed++;
-  tickArchiveProgress(progress, stats);
-}
-
-function logProjectRollup(
-  logger: ReturnType<typeof createLogger>,
-  verbose: boolean,
-  projectSlug: string,
-  archived: number,
-  activity: number,
-  activityLabel: string,
-) {
-  if (!verbose) {
-    return;
-  }
-
-  if (archived > 0) {
-    logger.verbose(`  📊 ${projectSlug}: ${archived} new, ${activity} ${activityLabel}\n`);
-  } else {
-    logger.verbose(`  📊 ${projectSlug}: all up to date\n`);
   }
 }
 

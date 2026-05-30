@@ -217,6 +217,8 @@ export class ProgressReporter {
   }
 }
 
+export type Logger = ReturnType<typeof createLogger>;
+
 export function createLogger(options: CliOptions) {
   return {
     info(message: string) {

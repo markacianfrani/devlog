@@ -10,7 +10,14 @@ import {
 } from "../progress.ts";
 import type { ProgressReporter } from "../progress.ts";
 import { slugFromPath, archiveConversation, matchesExcludedProject } from "./shared.ts";
-import { createArchiveStats, makeSummary, type ArchiveStats } from "./types.ts";
+import {
+  createArchiveStats,
+  logProjectRollup,
+  makeSummary,
+  recordArchived,
+  recordSkipped,
+  type ArchiveStats,
+} from "./types.ts";
 
 const config = loadConfig();
 const PI_SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions");
@@ -53,23 +60,6 @@ function countPiUserMessages(filePath: string): number {
   } catch {
     return 0;
   }
-}
-
-function tickArchiveProgress(progress: ProgressReporter | undefined, stats: ArchiveStats) {
-  progress?.tick({ processed: stats.processed, archived: stats.archived, skipped: stats.skipped });
-}
-
-function recordArchived(stats: ArchiveStats, activity: number, progress?: ProgressReporter) {
-  stats.archived++;
-  stats.activity += activity;
-  stats.processed++;
-  tickArchiveProgress(progress, stats);
-}
-
-function recordSkipped(stats: ArchiveStats, progress?: ProgressReporter) {
-  stats.skipped++;
-  stats.processed++;
-  tickArchiveProgress(progress, stats);
 }
 
 // Pi writes sessions in two layouts that coexist on disk:
@@ -203,16 +193,15 @@ export function archive(
   }
 
   for (const [projectSlug, pStats] of projectStats) {
-    if (options.verbose) {
-      logger.verbose(`📁 Project: ${projectSlug} (${pStats.total} sessions)`);
-      if (pStats.archived > 0) {
-        logger.verbose(
-          `  📊 ${projectSlug}: ${pStats.archived} new, ${pStats.messages} messages\n`,
-        );
-      } else {
-        logger.verbose(`  📊 ${projectSlug}: all up to date\n`);
-      }
-    }
+    logger.verbose(`📁 Project: ${projectSlug} (${pStats.total} sessions)`);
+    logProjectRollup(
+      logger,
+      options.verbose,
+      projectSlug,
+      pStats.archived,
+      pStats.messages,
+      "messages",
+    );
   }
 
   progress?.end();

@@ -88,12 +88,3 @@ export async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_
   printIndexSummary(stats, dbPath, Date.now() - startedAt);
   progress.flushWarnings();
 }
-
-// Re-exports for backward compatibility with tests importing from archive.ts
-export {
-  iterateOpencodeDbSessions,
-  reconstructSessionJsonl,
-  type MessageWithParts,
-  type OpencodeSession,
-} from "./sources/opencode.ts";
-export { slugFromPath } from "./sources/shared.ts";

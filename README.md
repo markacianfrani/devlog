@@ -4,43 +4,12 @@ Devlog copies all your coding dingus transcripts to a Third Location so you have
 
 Supports **Claude Code**, **Opencode**, and **pi**.
 
-## Quick start
-
-### Install locally
+## Install
 
 ```bash
-bun install
+npm install -g @cianfrani/devlog
 devlog init
 ```
-
-### Install globally
-
-If you want `devlog` available as a global command:
-
-```bash
-# Build the CLI first
-bun run build:cli
-
-# Link the package globally
-bun link -g devlog
-```
-
-Or if `bun link -g` fails (known Bun issue), manually create the symlink:
-
-```bash
-bun run build:cli
-bun link
-rm -f ~/.bun/bin/devlog
-ln -s "$(pwd)/dist/cli.js" ~/.bun/bin/devlog
-```
-
-After setup, run:
-
-```bash
-devlog init
-```
-
-For local development from a checkout, run `bun install`, then `bun run build:cli` and invoke `./dist/cli.js` directly.
 
 `devlog init` asks where to store your archive (default: `~/devlog`) and which agents to configure the MCP server for.
 
@@ -69,7 +38,7 @@ After running `devlog init`, you can search your session history from inside you
 
 **Tools:** `search`, `list_sessions`, `get_session`, `schema`, `query`
 
-If you don't want to use an MCP, write a skill and that describes where the sqlite or sessions are stored.
+If you don't want to use an MCP, write a skill that describes where the sqlite or sessions are stored.
 
 ```
 search past sessions for "auth middleware"
@@ -143,4 +112,8 @@ Rebuild the index from the archive at any time with `devlog index --rebuild`.
 
 ## Requirements
 
-- [Bun](https://bun.sh)
+- [Bun](https://bun.sh) — the CLI runs on the Bun runtime.
+
+## Contributing
+
+Working from a checkout: `bun install && bun run build:cli`, then invoke `./dist/cli.js` directly.

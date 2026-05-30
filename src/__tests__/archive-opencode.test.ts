@@ -3,11 +3,8 @@ import { expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  iterateOpencodeDbSessions,
-  reconstructSessionJsonl,
-  slugFromPath as archiveSlugFromPath,
-} from "../sources/opencode.ts";
+import { iterateOpencodeDbSessions, reconstructSessionJsonl } from "../sources/opencode.ts";
+import { slugFromPath as archiveSlugFromPath } from "../sources/shared.ts";
 import {
   ensureDir,
   runArchive,

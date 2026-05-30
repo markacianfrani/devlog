@@ -67,24 +67,27 @@ export async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_
 
   const db = getDb(dbPath);
   const stats = await indexAll(ARCHIVE_DIR, rebuild, db, {
-    onStart(total) {
-      progress.start("index", total);
-    },
-    onTick(processed, currentStats) {
-      progress.tick({
-        processed,
-        archived: currentStats.sessionsIndexed,
-        skipped: currentStats.sessionsSkipped,
-      });
-    },
-    onIndexed() {},
-    onWarning(warning) {
-      progress.warn(formatParseWarning(warning));
-    },
-    onError(event) {
-      progress.warn(
-        `[devlog] Failed indexing ${formatIndexedTarget(event.filePath, ARCHIVE_DIR)}: ${event.error}`,
-      );
+    excludeSources: config.excludeSources,
+    callbacks: {
+      onStart(total) {
+        progress.start("index", total);
+      },
+      onTick(processed, currentStats) {
+        progress.tick({
+          processed,
+          archived: currentStats.sessionsIndexed,
+          skipped: currentStats.sessionsSkipped,
+        });
+      },
+      onIndexed() {},
+      onWarning(warning) {
+        progress.warn(formatParseWarning(warning));
+      },
+      onError(event) {
+        progress.warn(
+          `[devlog] Failed indexing ${formatIndexedTarget(event.filePath, ARCHIVE_DIR)}: ${event.error}`,
+        );
+      },
     },
   });
   progress.end();

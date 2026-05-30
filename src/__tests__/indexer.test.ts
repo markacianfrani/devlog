@@ -442,6 +442,33 @@ describe("indexer", () => {
     ]);
   });
 
+  test("skips sources listed in excludeSources", async () => {
+    const db = getDb(dbPath);
+    const archiveRoot = path.join(tempDir, "archive");
+    const projectDir = path.join(archiveRoot, "projects", "test-project");
+
+    fs.mkdirSync(path.join(projectDir, "claude"), { recursive: true });
+    fs.mkdirSync(path.join(projectDir, "opencode"), { recursive: true });
+
+    fs.copyFileSync(
+      path.join(FIXTURES_DIR, "claude-simple.jsonl"),
+      path.join(projectDir, "claude", "claude-session.jsonl"),
+    );
+    fs.copyFileSync(
+      path.join(FIXTURES_DIR, "opencode-simple.jsonl"),
+      path.join(projectDir, "opencode", "opencode-session.jsonl"),
+    );
+
+    const stats = await indexAll(archiveRoot, false, db, { excludeSources: ["opencode"] });
+
+    expect(stats.sessionsIndexed).toBe(1);
+    const sources = db
+      .query<{ source: string }, []>("SELECT source FROM sessions")
+      .all()
+      .map((r) => r.source);
+    expect(sources).toEqual(["claude"]);
+  });
+
   test("indexes thinking blocks", async () => {
     const db = getDb(dbPath);
     await indexSession(path.join(FIXTURES_DIR, "claude-noise.jsonl"), "claude", "test-project", db);

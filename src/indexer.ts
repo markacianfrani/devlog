@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig, type Source } from "./config.ts";
+import type { Source } from "./config.ts";
 import {
   createIndexRedactionContext,
   redactForIndexing,
@@ -41,6 +41,11 @@ export interface IndexProgressCallbacks {
   onIndexed?: (event: IndexProgressEvent) => void;
   onWarning?: (warning: ParseWarning) => void;
   onError?: (event: IndexProgressEvent) => void;
+}
+
+export interface IndexAllOptions {
+  excludeSources?: readonly Source[];
+  callbacks?: IndexProgressCallbacks;
 }
 
 function getMtime(filePath: string): number {
@@ -337,17 +342,14 @@ function getProjectAndSource(
   return { project, source };
 }
 
-function isSourceExcluded(source: Source): boolean {
-  const config = loadConfig();
-  return config.excludeSources.includes(source);
-}
-
 export async function indexAll(
   archiveDir: string,
   rebuild: boolean,
   db: Database,
-  callbacks?: IndexProgressCallbacks,
+  options: IndexAllOptions = {},
 ): Promise<IndexStats> {
+  const { callbacks } = options;
+  const excludedSources = new Set(options.excludeSources ?? []);
   const stats: IndexStats = {
     sessionsIndexed: 0,
     sessionsSkipped: 0,
@@ -370,7 +372,7 @@ export async function indexAll(
 
   for (const filePath of jsonlFiles) {
     const info = getProjectAndSource(filePath, archiveDir);
-    if (!info || isSourceExcluded(info.source)) {
+    if (!info || excludedSources.has(info.source)) {
       continue;
     }
 

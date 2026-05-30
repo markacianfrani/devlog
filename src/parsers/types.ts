@@ -1,6 +1,10 @@
 export const SOURCES = ["claude", "opencode", "pi"] as const;
 export type Source = (typeof SOURCES)[number];
 
+export function isSource(value: string): value is Source {
+  return (SOURCES as readonly string[]).includes(value);
+}
+
 export const MESSAGE_ROLES = ["user", "assistant"] as const;
 export type MessageRole = (typeof MESSAGE_ROLES)[number];
 

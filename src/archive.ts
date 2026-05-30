@@ -1,5 +1,6 @@
 import path from "node:path";
-import { loadConfig, type Source } from "./config.ts";
+import { loadConfig } from "./config.ts";
+import { SOURCES, type Source } from "./parsers/types.ts";
 import {
   DEFAULT_CLI_OPTIONS,
   formatIndexedTarget,
@@ -11,9 +12,7 @@ import {
   type SourceSummary,
 } from "./progress.ts";
 import { ensureDir } from "./sources/shared.ts";
-import * as claude from "./sources/claude.ts";
-import * as opencode from "./sources/opencode.ts";
-import * as pi from "./sources/pi.ts";
+import { SOURCE_ADAPTERS } from "./sources/registry.ts";
 
 const config = loadConfig();
 const ARCHIVE_DIR = config.archiveDir;
@@ -32,16 +31,10 @@ export async function archiveMain(options: CliOptions = DEFAULT_CLI_OPTIONS) {
 
   const summaries: SourceSummary[] = [];
 
-  if (!isExcluded("claude")) {
-    summaries.push(claude.archive(options, progress));
-  }
-
-  if (!isExcluded("opencode")) {
-    summaries.push(opencode.archive(options, progress));
-  }
-
-  if (!isExcluded("pi")) {
-    summaries.push(pi.archive(options, progress));
+  for (const source of SOURCES) {
+    if (!isExcluded(source)) {
+      summaries.push(SOURCE_ADAPTERS[source].archive(options, progress));
+    }
   }
 
   printArchiveSummary(summaries, ARCHIVE_DIR, Date.now() - startedAt);

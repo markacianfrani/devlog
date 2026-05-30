@@ -7,11 +7,9 @@ import {
   redactForIndexing,
   type IndexRedactionContext,
 } from "./redaction.ts";
-import { parseClaudeSession } from "./parsers/claude.ts";
-import { parseOpenCodeSession } from "./parsers/opencode.ts";
-import { parsePiSession } from "./parsers/pi.ts";
-import type { ParseOutcome, ParseResult } from "./parsers/types.ts";
+import { isSource, type ParseResult } from "./parsers/types.ts";
 import type { ParseWarning } from "./parsers/types.ts";
+import { SOURCE_ADAPTERS } from "./sources/registry.ts";
 
 export interface IndexFailure {
   filePath: string;
@@ -257,14 +255,7 @@ export async function indexSession(
     return { indexed: false, messageCount: 0 };
   }
 
-  let outcome: ParseOutcome;
-  if (source === "claude") {
-    outcome = await parseClaudeSession(jsonlPath, project);
-  } else if (source === "opencode") {
-    outcome = await parseOpenCodeSession(jsonlPath, project);
-  } else {
-    outcome = await parsePiSession(jsonlPath, project);
-  }
+  const outcome = await SOURCE_ADAPTERS[source].parse(jsonlPath, project);
 
   for (const warning of outcome.warnings) {
     onWarning?.(warning);
@@ -335,7 +326,7 @@ function getProjectAndSource(
   const project = parts[1];
   const source = parts[2];
 
-  if (source !== "claude" && source !== "opencode" && source !== "pi") {
+  if (!isSource(source)) {
     return undefined;
   }
 

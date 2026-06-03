@@ -1,14 +1,15 @@
 import fs from "node:fs";
-import path from "node:path";
 import os from "node:os";
+import path from "node:path";
+
 import { loadConfig } from "../config.ts";
 import {
   createLogger,
   DEFAULT_CLI_OPTIONS,
   type CliOptions,
+  type ProgressReporter,
   type SourceSummary,
 } from "../progress.ts";
-import type { ProgressReporter } from "../progress.ts";
 import { slugFromPath, archiveConversation, matchesExcludedProject } from "./shared.ts";
 import {
   createArchiveStats,

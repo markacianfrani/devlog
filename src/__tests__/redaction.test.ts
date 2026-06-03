@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import type {
   ParseResult,
   TextContentBlock,
@@ -6,6 +7,7 @@ import type {
   ToolUseContentBlock,
 } from "../parsers/types.ts";
 import { redactForIndexing } from "../redaction.ts";
+import { at } from "./archive-fixtures.ts";
 
 function withEnv<T>(name: string, value: string | undefined, run: () => T): T {
   const previous = process.env[name];
@@ -65,17 +67,17 @@ describe("redaction", () => {
     withEnv("DEVLOG_TEST_SECRET_TOKEN_SCOPE", "session-12345", () => {
       const original = makeParseResult("session-12345");
       original.meta.id = "session-12345";
-      original.messages[0].sessionId = "session-12345";
-      original.prLinks[0].sessionId = "session-12345";
+      at(original.messages, 0).sessionId = "session-12345";
+      at(original.prLinks, 0).sessionId = "session-12345";
 
       const redacted = redactForIndexing(original);
-      const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
+      const redactedText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
 
       expect(redacted.meta.id).toBe("session-12345");
-      expect(redacted.messages[0].sessionId).toBe("session-12345");
-      expect(redacted.prLinks[0].sessionId).toBe("session-12345");
-      expect(redacted.prLinks[0].prUrl).toContain("[REDACTED:devlog-test-secret-token-scope]");
-      expect(redacted.prLinks[0].prUrl).not.toContain("session-12345");
+      expect(at(redacted.messages, 0).sessionId).toBe("session-12345");
+      expect(at(redacted.prLinks, 0).sessionId).toBe("session-12345");
+      expect(at(redacted.prLinks, 0).prUrl).toContain("[REDACTED:devlog-test-secret-token-scope]");
+      expect(at(redacted.prLinks, 0).prUrl).not.toContain("session-12345");
 
       expect(redacted.meta.title).toBe("[REDACTED:devlog-test-secret-token-scope]");
       expect(redactedText).toBe("[REDACTED:devlog-test-secret-token-scope]");
@@ -86,7 +88,7 @@ describe("redaction", () => {
     withEnv("MONKEY", "superlongbanana", () => {
       const original = makeParseResult("superlongbanana");
       const redacted = redactForIndexing(original);
-      const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
+      const redactedText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
 
       expect(redacted.meta.title).toBe("superlongbanana");
       expect(redactedText).toBe("superlongbanana");
@@ -99,19 +101,19 @@ describe("redaction", () => {
     const original = makeParseResult(githubPat);
 
     const redacted = redactForIndexing(original);
-    const toolUse = redacted.messages[0].content[2] as ToolUseContentBlock;
+    const toolUse = at(at(redacted.messages, 0).content, 2) as ToolUseContentBlock;
 
     expect(toolUse.toolInput).toContain("[REDACTED:github-token]");
     expect(toolUse.toolInput).not.toContain(githubPat);
 
-    const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
+    const redactedText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
     expect(redactedText).toBe("[REDACTED:github-token]");
   });
 
   test("redacts secrets inside thinking blocks", () => {
     const original = makeParseResult("hf_abcdefghijklmnopqrstuvwxyz12");
     const redacted = redactForIndexing(original);
-    const thinking = redacted.messages[0].content[1] as ThinkingContentBlock;
+    const thinking = at(at(redacted.messages, 0).content, 1) as ThinkingContentBlock;
 
     expect(thinking.thinking).toBe("considering [REDACTED:huggingface-token]");
     expect(thinking.thinking).not.toContain("hf_abcdefghijklmnopqrstuvwxyz12");
@@ -169,7 +171,7 @@ describe("redaction", () => {
     test(`redacts ${label}`, () => {
       const original = makeParseResult(secret);
       const redacted = redactForIndexing(original);
-      const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
+      const redactedText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
 
       expect(redactedText).toContain(marker);
       expect(redactedText).not.toContain(secret);
@@ -181,7 +183,7 @@ describe("redaction", () => {
       "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA1234567890abcdef\nfakekeybodyfakekeybodyfakekeybody\n-----END RSA PRIVATE KEY-----";
     const original = makeParseResult(privateKey);
     const redacted = redactForIndexing(original);
-    const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
+    const redactedText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
 
     expect(redactedText).toBe("[REDACTED:private-key]");
     expect(redactedText).not.toContain("fakekeybody");
@@ -191,7 +193,7 @@ describe("redaction", () => {
     const dbUrl = "postgres://appuser:supersecretpass@db.internal:5432/app";
     const original = makeParseResult(dbUrl);
     const redacted = redactForIndexing(original);
-    const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
+    const redactedText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
 
     expect(redactedText).toBe("postgres://appuser:[REDACTED]@db.internal:5432/app");
     expect(redactedText).not.toContain("supersecretpass");
@@ -200,7 +202,7 @@ describe("redaction", () => {
   test("generic fallback redacts key=value style credentials", () => {
     const original = makeParseResult('config = { password: "hunter2hunter2hunter2" }');
     const redacted = redactForIndexing(original);
-    const redactedText = (redacted.messages[0].content[0] as TextContentBlock).text;
+    const redactedText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
 
     expect(redactedText).toContain("[REDACTED]");
     expect(redactedText).not.toContain("hunter2hunter2hunter2");

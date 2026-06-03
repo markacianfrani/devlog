@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
 import { closeDb, getDb } from "../db.ts";
 import { indexAll, indexSession } from "../indexer.ts";
 import type { IndexRedactionContext } from "../redaction.ts";
+import { at } from "./archive-fixtures.ts";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures");
 
@@ -82,11 +84,11 @@ describe("indexer", () => {
       .all();
 
     expect(messages).toHaveLength(2);
-    expect(messages[0].role).toBe("user");
-    expect(messages[1].role).toBe("assistant");
-    expect(messages[1].tokens_in).toBe(100);
-    expect(messages[1].cache_read_tokens).toBe(20);
-    expect(messages[1].cache_write_tokens).toBe(15);
+    expect(at(messages, 0).role).toBe("user");
+    expect(at(messages, 1).role).toBe("assistant");
+    expect(at(messages, 1).tokens_in).toBe(100);
+    expect(at(messages, 1).cache_read_tokens).toBe(20);
+    expect(at(messages, 1).cache_write_tokens).toBe(15);
 
     const blocks = db
       .query<{ type: string; text: string | null }, []>(
@@ -95,8 +97,8 @@ describe("indexer", () => {
       .all();
 
     expect(blocks).toHaveLength(2);
-    expect(blocks[0].type).toBe("text");
-    expect(blocks[0].text).toContain("Hello");
+    expect(at(blocks, 0).type).toBe("text");
+    expect(at(blocks, 0).text).toContain("Hello");
   });
 
   test("indexes tool usage correctly", async () => {
@@ -115,8 +117,8 @@ describe("indexer", () => {
       .all();
 
     expect(toolBlocks).toHaveLength(1);
-    expect(toolBlocks[0].tool_name).toBe("Read");
-    expect(toolBlocks[0].tool_use_id).toBe("tool-1");
+    expect(at(toolBlocks, 0).tool_name).toBe("Read");
+    expect(at(toolBlocks, 0).tool_use_id).toBe("tool-1");
 
     const resultBlocks = db
       .query<{ type: string; tool_output: string | null; tool_use_id: string | null }, []>(
@@ -125,8 +127,8 @@ describe("indexer", () => {
       .all();
 
     expect(resultBlocks).toHaveLength(1);
-    expect(resultBlocks[0].tool_output).toContain("my-project");
-    expect(resultBlocks[0].tool_use_id).toBe("tool-1");
+    expect(at(resultBlocks, 0).tool_output).toContain("my-project");
+    expect(at(resultBlocks, 0).tool_use_id).toBe("tool-1");
   });
 
   test("redacts content before writing to SQLite", async () => {
@@ -343,6 +345,7 @@ describe("indexer", () => {
       },
     };
 
+    // oxlint-disable-next-line typescript/await-thenable -- Bun's async matcher isn't typed as Thenable, but the await is required so the rejection is asserted before the query below.
     await expect(
       indexSession(tempFile, "claude", "test-project", db, failingContext),
     ).rejects.toThrow("redaction unavailable");
@@ -480,7 +483,7 @@ describe("indexer", () => {
       .all();
 
     expect(thinkingBlocks).toHaveLength(1);
-    expect(thinkingBlocks[0].text).toBe("Let me think about this...");
+    expect(at(thinkingBlocks, 0).text).toBe("Let me think about this...");
   });
 
   test("indexes pr-link records into pr_links table", async () => {
@@ -494,9 +497,9 @@ describe("indexer", () => {
       .all();
 
     expect(prLinks).toHaveLength(1);
-    expect(prLinks[0].pr_number).toBe(109);
-    expect(prLinks[0].pr_url).toBe("https://github.com/example-org/web-app/pull/109");
-    expect(prLinks[0].pr_repository).toBe("example-org/web-app");
+    expect(at(prLinks, 0).pr_number).toBe(109);
+    expect(at(prLinks, 0).pr_url).toBe("https://github.com/example-org/web-app/pull/109");
+    expect(at(prLinks, 0).pr_repository).toBe("example-org/web-app");
   });
 
   test("populates FTS index for searching", async () => {
@@ -519,6 +522,6 @@ describe("indexer", () => {
       .all("Hello");
 
     expect(ftsResults.length).toBeGreaterThan(0);
-    expect(ftsResults[0].session_id).toBe("test-session-1");
+    expect(at(ftsResults, 0).session_id).toBe("test-session-1");
   });
 });

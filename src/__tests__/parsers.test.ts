@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+
 import { parseClaudeSession } from "../parsers/claude.ts";
 import { parseOpenCodeSession } from "../parsers/opencode.ts";
 import { parsePiSession } from "../parsers/pi.ts";
 import { parseContentBlock, ParseWarningCollector } from "../parsers/shared.ts";
-import { formatParseWarning } from "../progress.ts";
 import type {
   ParseOutcome,
   ParseResult,
@@ -14,7 +14,9 @@ import type {
   ToolResultContentBlock,
   ToolUseContentBlock,
 } from "../parsers/types.ts";
+import { formatParseWarning } from "../progress.ts";
 import { redactForIndexing } from "../redaction.ts";
+import { at } from "./archive-fixtures.ts";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures");
 
@@ -63,14 +65,14 @@ describe("Claude parser", () => {
 
     expect(result.messages).toHaveLength(2);
 
-    const userMsg = result.messages[0];
+    const userMsg = at(result.messages, 0);
     expect(userMsg.id).toBe("msg-user-1");
     expect(userMsg.role).toBe("user");
     expect(userMsg.content).toHaveLength(1);
-    expect(userMsg.content[0].type).toBe("text");
-    expect((userMsg.content[0] as TextContentBlock).text).toBe("Hello, how are you?");
+    expect(at(userMsg.content, 0).type).toBe("text");
+    expect((at(userMsg.content, 0) as TextContentBlock).text).toBe("Hello, how are you?");
 
-    const asstMsg = result.messages[1];
+    const asstMsg = at(result.messages, 1);
     expect(asstMsg.id).toBe("msg-asst-1");
     expect(asstMsg.role).toBe("assistant");
     expect(asstMsg.parentId).toBe("msg-user-1");
@@ -79,7 +81,7 @@ describe("Claude parser", () => {
     expect(asstMsg.tokensOut).toBe(50);
     expect(asstMsg.cacheReadTokens).toBe(20);
     expect(asstMsg.cacheWriteTokens).toBe(15);
-    expect((asstMsg.content[0] as TextContentBlock).text).toBe(
+    expect((at(asstMsg.content, 0) as TextContentBlock).text).toBe(
       "I'm doing well, thank you for asking!",
     );
   });
@@ -91,19 +93,21 @@ describe("Claude parser", () => {
 
     expect(result.messages).toHaveLength(4);
 
-    const toolUseMsg = result.messages[1];
+    const toolUseMsg = at(result.messages, 1);
     expect(toolUseMsg.content).toHaveLength(1);
-    expect(toolUseMsg.content[0].type).toBe("tool_use");
-    expect((toolUseMsg.content[0] as ToolUseContentBlock).toolName).toBe("Read");
-    expect((toolUseMsg.content[0] as ToolUseContentBlock).toolInput).toContain("package.json");
-    expect((toolUseMsg.content[0] as ToolUseContentBlock).toolUseId).toBe("tool-1");
+    expect(at(toolUseMsg.content, 0).type).toBe("tool_use");
+    expect((at(toolUseMsg.content, 0) as ToolUseContentBlock).toolName).toBe("Read");
+    expect((at(toolUseMsg.content, 0) as ToolUseContentBlock).toolInput).toContain("package.json");
+    expect((at(toolUseMsg.content, 0) as ToolUseContentBlock).toolUseId).toBe("tool-1");
 
-    const toolResultMsg = result.messages[2];
+    const toolResultMsg = at(result.messages, 2);
     expect(toolResultMsg.role).toBe("user");
     expect(toolResultMsg.content).toHaveLength(1);
-    expect(toolResultMsg.content[0].type).toBe("tool_result");
-    expect((toolResultMsg.content[0] as ToolResultContentBlock).toolOutput).toContain("my-project");
-    expect((toolResultMsg.content[0] as ToolResultContentBlock).toolUseId).toBe("tool-1");
+    expect(at(toolResultMsg.content, 0).type).toBe("tool_result");
+    expect((at(toolResultMsg.content, 0) as ToolResultContentBlock).toolOutput).toContain(
+      "my-project",
+    );
+    expect((at(toolResultMsg.content, 0) as ToolResultContentBlock).toolUseId).toBe("tool-1");
   });
 
   test("keeps parsing separate from redaction transform", async () => {
@@ -112,24 +116,24 @@ describe("Claude parser", () => {
         await parseClaudeSession(path.join(FIXTURES_DIR, "claude-redaction.jsonl"), "test-project"),
       );
 
-      const parsedUserText = (parsed.messages[0].content[0] as TextContentBlock).text;
+      const parsedUserText = (at(at(parsed.messages, 0).content, 0) as TextContentBlock).text;
       expect(parsedUserText).toContain("sk-proj-123456789012345678901234");
       expect(parsedUserText).toContain("literal-secret-token-12345");
 
       const redacted = redactForIndexing(parsed);
 
-      const firstUserText = (redacted.messages[0].content[0] as TextContentBlock).text;
+      const firstUserText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
       expect(firstUserText).toContain("[REDACTED:openai-project-key]");
       expect(firstUserText).toContain("[REDACTED:devlog-test-secret-token-parse]");
       expect(firstUserText).not.toContain("sk-proj-123456789012345678901234");
       expect(firstUserText).not.toContain("literal-secret-token-12345");
 
-      const toolUse = redacted.messages[1].content[0] as ToolUseContentBlock;
+      const toolUse = at(at(redacted.messages, 1).content, 0) as ToolUseContentBlock;
       expect(toolUse.toolInput).toContain("Bearer [REDACTED]");
       expect(toolUse.toolInput).toContain("[REDACTED:github-token]");
       expect(toolUse.toolInput).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
 
-      const toolResult = redacted.messages[2].content[0] as ToolResultContentBlock;
+      const toolResult = at(at(redacted.messages, 2).content, 0) as ToolResultContentBlock;
       expect(toolResult.toolOutput).toContain("[REDACTED:jwt]");
       expect(toolResult.toolOutput).toContain("[REDACTED:huggingface-token]");
       expect(toolResult.toolOutput).not.toContain("hf_abcdefghijklmnopqrstuvwxyz12");
@@ -145,8 +149,8 @@ describe("Claude parser", () => {
     );
 
     expect(result.messages).toHaveLength(2);
-    expect(result.messages[0].agentId).toBe("agent-123");
-    expect(result.messages[1].agentId).toBe("agent-123");
+    expect(at(result.messages, 0).agentId).toBe("agent-123");
+    expect(at(result.messages, 1).agentId).toBe("agent-123");
   });
 
   test("filters out noise records and preserves thinking blocks", async () => {
@@ -156,17 +160,29 @@ describe("Claude parser", () => {
 
     expect(result.messages).toHaveLength(2);
 
-    const userMsg = result.messages[0];
-    expect((userMsg.content[0] as TextContentBlock).text).toBe("Real user message");
+    const userMsg = at(result.messages, 0);
+    expect((at(userMsg.content, 0) as TextContentBlock).text).toBe("Real user message");
 
-    const asstMsg = result.messages[1];
+    const asstMsg = at(result.messages, 1);
     expect(asstMsg.content).toHaveLength(2);
-    expect(asstMsg.content[0].type).toBe("thinking");
-    expect((asstMsg.content[0] as ThinkingContentBlock).thinking).toBe(
+    expect(at(asstMsg.content, 0).type).toBe("thinking");
+    expect((at(asstMsg.content, 0) as ThinkingContentBlock).thinking).toBe(
       "Let me think about this...",
     );
-    expect(asstMsg.content[1].type).toBe("text");
-    expect((asstMsg.content[1] as TextContentBlock).text).toBe("Here is my response.");
+    expect(at(asstMsg.content, 1).type).toBe("text");
+    expect((at(asstMsg.content, 1) as TextContentBlock).text).toBe("Here is my response.");
+  });
+
+  test("skips bridge-session records without an unknown-type warning", async () => {
+    const outcome = await parseClaudeSession(
+      path.join(FIXTURES_DIR, "claude-noise.jsonl"),
+      "test-project",
+    );
+
+    const unknownBridge = outcome.warnings.filter(
+      (w) => w.kind === "unknown-record-type" && w.type === "bridge-session",
+    );
+    expect(unknownBridge).toEqual([]);
   });
 
   test("preserves thinking blocks and token data from thinking-only assistant messages", async () => {
@@ -179,11 +195,11 @@ describe("Claude parser", () => {
 
     expect(result.messages).toHaveLength(2);
 
-    const asstMsg = result.messages[1];
+    const asstMsg = at(result.messages, 1);
     expect(asstMsg.role).toBe("assistant");
     expect(asstMsg.content).toHaveLength(1);
-    expect(asstMsg.content[0].type).toBe("thinking");
-    expect((asstMsg.content[0] as ThinkingContentBlock).thinking).toBe(
+    expect(at(asstMsg.content, 0).type).toBe("thinking");
+    expect((at(asstMsg.content, 0) as ThinkingContentBlock).thinking).toBe(
       "Let me reason through this carefully...",
     );
     expect(asstMsg.tokensIn).toBe(500);
@@ -320,14 +336,14 @@ describe("Claude parser", () => {
     );
 
     expect(result.messages).toHaveLength(3);
-    const firstAsst = result.messages[1];
+    const firstAsst = at(result.messages, 1);
     expect(firstAsst.content).toHaveLength(2);
-    expect(firstAsst.content[0].type).toBe("redacted_thinking");
-    expect(firstAsst.content[1].type).toBe("text");
+    expect(at(firstAsst.content, 0).type).toBe("redacted_thinking");
+    expect(at(firstAsst.content, 1).type).toBe("text");
 
-    const secondAsst = result.messages[2];
-    expect(secondAsst.content[0].type).toBe("redacted_thinking");
-    expect(secondAsst.content[1].type).toBe("text");
+    const secondAsst = at(result.messages, 2);
+    expect(at(secondAsst.content, 0).type).toBe("redacted_thinking");
+    expect(at(secondAsst.content, 1).type).toBe("text");
   });
 
   test("preserves document content blocks with mediaType", async () => {
@@ -335,11 +351,11 @@ describe("Claude parser", () => {
       await parseClaudeSession(path.join(FIXTURES_DIR, "claude-document.jsonl"), "test-project"),
     );
 
-    const userMsg = result.messages[0];
+    const userMsg = at(result.messages, 0);
     expect(userMsg.content).toHaveLength(2);
-    expect(userMsg.content[0].type).toBe("text");
-    expect(userMsg.content[1].type).toBe("document");
-    const doc = userMsg.content[1] as { type: "document"; mediaType?: string };
+    expect(at(userMsg.content, 0).type).toBe("text");
+    expect(at(userMsg.content, 1).type).toBe("document");
+    const doc = at(userMsg.content, 1) as { type: "document"; mediaType?: string };
     expect(doc.mediaType).toBe("application/pdf");
   });
 
@@ -353,9 +369,11 @@ describe("Claude parser", () => {
 
     expect(result.messages).toHaveLength(3);
 
-    const asstMsg = result.messages[1];
+    const asstMsg = at(result.messages, 1);
     expect(asstMsg.id).toBe("msg-asst-1");
-    expect((asstMsg.content[0] as TextContentBlock).text).toBe("Full response with more detail.");
+    expect((at(asstMsg.content, 0) as TextContentBlock).text).toBe(
+      "Full response with more detail.",
+    );
     expect(asstMsg.tokensOut).toBe(20);
   });
 });
@@ -372,11 +390,11 @@ describe("OpenCode parser", () => {
 
     expect(result.messages).toHaveLength(3);
 
-    const userMsg = result.messages[0];
+    const userMsg = at(result.messages, 0);
     expect(userMsg.role).toBe("user");
-    expect((userMsg.content[0] as TextContentBlock).text).toBe("Hello");
+    expect((at(userMsg.content, 0) as TextContentBlock).text).toBe("Hello");
 
-    const asstMsg = result.messages[1];
+    const asstMsg = at(result.messages, 1);
     expect(asstMsg.role).toBe("assistant");
     expect(asstMsg.tokensIn).toBe(100);
     expect(asstMsg.tokensOut).toBe(50);
@@ -387,14 +405,14 @@ describe("OpenCode parser", () => {
       await parseOpenCodeSession(path.join(FIXTURES_DIR, "opencode-simple.jsonl"), "test-project"),
     );
 
-    const toolMsg = result.messages[2];
+    const toolMsg = at(result.messages, 2);
     expect(toolMsg.content).toHaveLength(2);
-    expect(toolMsg.content[0].type).toBe("tool_use");
-    expect((toolMsg.content[0] as ToolUseContentBlock).toolName).toBe("bash");
-    expect((toolMsg.content[0] as ToolUseContentBlock).toolUseId).toBe("tool-1");
-    expect(toolMsg.content[1].type).toBe("tool_result");
-    expect((toolMsg.content[1] as ToolResultContentBlock).toolOutput).toContain("file1.txt");
-    expect((toolMsg.content[1] as ToolResultContentBlock).toolUseId).toBe("tool-1");
+    expect(at(toolMsg.content, 0).type).toBe("tool_use");
+    expect((at(toolMsg.content, 0) as ToolUseContentBlock).toolName).toBe("bash");
+    expect((at(toolMsg.content, 0) as ToolUseContentBlock).toolUseId).toBe("tool-1");
+    expect(at(toolMsg.content, 1).type).toBe("tool_result");
+    expect((at(toolMsg.content, 1) as ToolResultContentBlock).toolOutput).toContain("file1.txt");
+    expect((at(toolMsg.content, 1) as ToolResultContentBlock).toolUseId).toBe("tool-1");
   });
 
   test("extracts title from first user message", async () => {
@@ -413,20 +431,20 @@ describe("OpenCode parser", () => {
       ),
     );
 
-    const parsedUserText = (parsed.messages[0].content[0] as TextContentBlock).text;
+    const parsedUserText = (at(at(parsed.messages, 0).content, 0) as TextContentBlock).text;
     expect(parsedUserText).toContain(
       "github_pat_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_abc",
     );
 
     const redacted = redactForIndexing(parsed);
-    const firstUserText = (redacted.messages[0].content[0] as TextContentBlock).text;
+    const firstUserText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
     expect(firstUserText).toBe("Use [REDACTED:github-token] for testing");
 
-    const toolUse = redacted.messages[1].content[0] as ToolUseContentBlock;
+    const toolUse = at(at(redacted.messages, 1).content, 0) as ToolUseContentBlock;
     expect(toolUse.toolInput).toContain("Bearer [REDACTED]");
     expect(toolUse.toolInput).toContain("[REDACTED:github-token]");
 
-    const toolResult = redacted.messages[1].content[1] as ToolResultContentBlock;
+    const toolResult = at(at(redacted.messages, 1).content, 1) as ToolResultContentBlock;
     expect(toolResult.toolOutput).toContain("[REDACTED:huggingface-token]");
     expect(toolResult.toolOutput).toContain("[REDACTED:jwt]");
   });
@@ -447,24 +465,24 @@ describe("Pi parser", () => {
 
     expect(result.messages).toHaveLength(3);
 
-    const assistant = result.messages[1];
+    const assistant = at(result.messages, 1);
     expect(assistant.role).toBe("assistant");
     expect(assistant.tokensIn).toBe(120);
     expect(assistant.tokensOut).toBe(45);
     expect(assistant.cacheReadTokens).toBe(10);
     expect(assistant.cacheWriteTokens).toBe(5);
     expect(assistant.content).toHaveLength(2);
-    expect(assistant.content[0].type).toBe("text");
-    expect(assistant.content[1].type).toBe("tool_use");
-    expect((assistant.content[1] as ToolUseContentBlock).toolName).toBe("read");
-    expect((assistant.content[1] as ToolUseContentBlock).toolUseId).toBe("call_1");
+    expect(at(assistant.content, 0).type).toBe("text");
+    expect(at(assistant.content, 1).type).toBe("tool_use");
+    expect((at(assistant.content, 1) as ToolUseContentBlock).toolName).toBe("read");
+    expect((at(assistant.content, 1) as ToolUseContentBlock).toolUseId).toBe("call_1");
 
-    const toolResult = result.messages[2];
+    const toolResult = at(result.messages, 2);
     expect(toolResult.role).toBe("user");
     expect(toolResult.content).toHaveLength(1);
-    expect(toolResult.content[0].type).toBe("tool_result");
-    expect((toolResult.content[0] as ToolResultContentBlock).toolOutput).toContain("auth");
-    expect((toolResult.content[0] as ToolResultContentBlock).toolUseId).toBe("call_1");
+    expect(at(toolResult.content, 0).type).toBe("tool_result");
+    expect((at(toolResult.content, 0) as ToolResultContentBlock).toolOutput).toContain("auth");
+    expect((at(toolResult.content, 0) as ToolResultContentBlock).toolUseId).toBe("call_1");
   });
 
   test("surfaces pi custom_message entries as user messages with wrapping", async () => {
@@ -473,9 +491,7 @@ describe("Pi parser", () => {
     );
 
     const customMsg = result.messages.find((m) =>
-      m.content.some(
-        (b) => b.type === "text" && (b as TextContentBlock).text.includes("custom-message"),
-      ),
+      m.content.some((b) => b.type === "text" && b.text.includes("custom-message")),
     );
     if (!customMsg) {
       throw new Error("Expected a custom_message to be surfaced");
@@ -568,7 +584,7 @@ describe("Pi parser", () => {
 
       expect(
         result.messages.some((m) =>
-          m.content.some((b) => b.type === "text" && (b as TextContentBlock).text.includes("high")),
+          m.content.some((b) => b.type === "text" && b.text.includes("high")),
         ),
       ).toBe(false);
     } finally {
@@ -596,8 +612,8 @@ describe("Pi parser", () => {
       if (!compaction) {
         throw new Error("Expected compaction message");
       }
-      expect(compaction.content[0].type).toBe("text");
-      expect((compaction.content[0] as TextContentBlock).text).toContain(
+      expect(at(compaction.content, 0).type).toBe("text");
+      expect((at(compaction.content, 0) as TextContentBlock).text).toContain(
         "<pi:compaction>Compacted progress summary</pi:compaction>",
       );
 
@@ -606,8 +622,8 @@ describe("Pi parser", () => {
       if (!branchSummary) {
         throw new Error("Expected branch summary message");
       }
-      expect(branchSummary.content[0].type).toBe("text");
-      expect((branchSummary.content[0] as TextContentBlock).text).toContain(
+      expect(at(branchSummary.content, 0).type).toBe("text");
+      expect((at(branchSummary.content, 0) as TextContentBlock).text).toContain(
         '<pi:branch-summary fromId="u1">Branch exploration summary</pi:branch-summary>',
       );
     } finally {
@@ -620,20 +636,20 @@ describe("Pi parser", () => {
       await parsePiSession(path.join(FIXTURES_DIR, "pi-redaction.jsonl"), "test-project"),
     );
 
-    const parsedUserText = (parsed.messages[0].content[0] as TextContentBlock).text;
+    const parsedUserText = (at(at(parsed.messages, 0).content, 0) as TextContentBlock).text;
     expect(parsedUserText).toContain("sk-or-abcdefghijklmnopqrstuvwxyz123456");
 
     const redacted = redactForIndexing(parsed);
 
-    const firstUserText = (redacted.messages[0].content[0] as TextContentBlock).text;
+    const firstUserText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
     expect(firstUserText).toContain("[REDACTED:openrouter-key]");
     expect(firstUserText).not.toContain("sk-or-abcdefghijklmnopqrstuvwxyz123456");
 
-    const toolUse = redacted.messages[1].content[1] as ToolUseContentBlock;
+    const toolUse = at(at(redacted.messages, 1).content, 1) as ToolUseContentBlock;
     expect(toolUse.toolInput).toContain("Bearer [REDACTED]");
     expect(toolUse.toolInput).toContain("[REDACTED:github-token]");
 
-    const toolResult = redacted.messages[2].content[0] as ToolResultContentBlock;
+    const toolResult = at(at(redacted.messages, 2).content, 0) as ToolResultContentBlock;
     expect(toolResult.toolOutput).toContain("[REDACTED:huggingface-token]");
     expect(toolResult.toolOutput).toContain("[REDACTED:jwt]");
   });

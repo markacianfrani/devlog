@@ -1,7 +1,8 @@
-import * as p from "@clack/prompts";
 import fs from "node:fs";
-import path from "node:path";
 import os from "node:os";
+import path from "node:path";
+
+import * as p from "@clack/prompts";
 
 type Harness = "claude" | "opencode" | "pi";
 
@@ -31,7 +32,8 @@ function writeJsonFile(filePath: string, data: Record<string, unknown>) {
 function installClaude(devlogBin: string): void {
   const configPath = path.join(os.homedir(), ".claude.json");
   const config = readJsonFile(configPath) ?? {};
-  const mcpServers = (config["mcpServers"] as Record<string, unknown>) ?? {};
+  const mcpServers: Record<string, unknown> =
+    (config["mcpServers"] as Record<string, unknown> | undefined) ?? {};
 
   mcpServers["devlog"] = { command: devlogBin, args: ["mcp"] };
   config["mcpServers"] = mcpServers;
@@ -54,7 +56,7 @@ function installOpencode(devlogBin: string): void {
   }
 
   const config = readJsonFile(configPath) ?? {};
-  const mcp = (config["mcp"] as Record<string, unknown>) ?? {};
+  const mcp: Record<string, unknown> = (config["mcp"] as Record<string, unknown> | undefined) ?? {};
 
   mcp["devlog"] = {
     type: "local",
@@ -69,7 +71,8 @@ function installOpencode(devlogBin: string): void {
 function installPi(devlogBin: string): void {
   const configPath = path.join(os.homedir(), ".pi", "agent", "mcp.json");
   const config = readJsonFile(configPath) ?? {};
-  const mcpServers = (config["mcpServers"] as Record<string, unknown>) ?? {};
+  const mcpServers: Record<string, unknown> =
+    (config["mcpServers"] as Record<string, unknown> | undefined) ?? {};
 
   mcpServers["devlog"] = { command: devlogBin, args: ["mcp"] };
   config["mcpServers"] = mcpServers;
@@ -172,7 +175,7 @@ export async function initMain(): Promise<void> {
   p.log.success(`Config saved to ${configPath}`);
 
   if (harnesses.length > 0) {
-    const devlogBin = Bun.which("devlog") ?? path.resolve(process.argv[1]);
+    const devlogBin = Bun.which("devlog") ?? path.resolve(process.argv[1] ?? "");
 
     for (const harness of harnesses) {
       switch (harness) {

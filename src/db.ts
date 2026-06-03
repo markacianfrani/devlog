@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+
 import { DEFAULTS } from "./config.ts";
 import type { ContentBlockType, MessageRole, Source } from "./parsers/types.ts";
 import { ensureDir } from "./sources/shared.ts";

@@ -1,4 +1,5 @@
 import path from "node:path";
+
 import { loadConfig } from "./config.ts";
 import { SOURCES, type Source } from "./parsers/types.ts";
 import {
@@ -11,8 +12,8 @@ import {
   type CliOptions,
   type SourceSummary,
 } from "./progress.ts";
-import { ensureDir } from "./sources/shared.ts";
 import { SOURCE_ADAPTERS } from "./sources/registry.ts";
+import { ensureDir } from "./sources/shared.ts";
 
 const config = loadConfig();
 const ARCHIVE_DIR = config.archiveDir;

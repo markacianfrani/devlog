@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
 import { type CliOptions } from "./progress.ts";
 
 const HELP_TEXT = `Usage: devlog [archive|index|mcp|init|version] [options]

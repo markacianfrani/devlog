@@ -3,9 +3,11 @@ import { expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
 import { iterateOpencodeDbSessions, reconstructSessionJsonl } from "../sources/opencode.ts";
 import { slugFromPath as archiveSlugFromPath } from "../sources/shared.ts";
 import {
+  at,
   ensureDir,
   runArchive,
   setupOpenCodeSession,
@@ -68,13 +70,13 @@ test("reconstructs opencode session as JSONL from message/part directories", () 
     const lines = fs.readFileSync(archivePath, "utf-8").trim().split("\n");
     expect(lines.length).toBe(2);
 
-    const userMsg = JSON.parse(lines[0]);
+    const userMsg = JSON.parse(at(lines, 0));
     expect(userMsg.type).toBe("user");
     expect(userMsg.message.role).toBe("user");
     expect(userMsg.message.content).toBe("Hello, help me with code");
     expect(userMsg.sessionId).toBe("ses_test123");
 
-    const asstMsg = JSON.parse(lines[1]);
+    const asstMsg = JSON.parse(at(lines, 1));
     expect(asstMsg.type).toBe("assistant");
     expect(asstMsg.message.role).toBe("assistant");
     expect(asstMsg.message.model).toBe("claude-opus-4-5");
@@ -242,19 +244,19 @@ test("archives opencode sessions from SQLite DB", () => {
   const results = [...iterateOpencodeDbSessions(db, archiveSlugFromPath)];
   expect(results.length).toBe(1);
 
-  const { projectSlug, session, messagesWithParts } = results[0];
+  const { projectSlug, session, messagesWithParts } = at(results, 0);
   expect(projectSlug).toBe(archiveSlugFromPath(worktree));
   expect(session.id).toBe("ses_db1");
 
   const lines = reconstructSessionJsonl("ses_db1", session, messagesWithParts);
   expect(lines.length).toBe(2);
 
-  const userMsg = JSON.parse(lines[0]);
+  const userMsg = JSON.parse(at(lines, 0));
   expect(userMsg.type).toBe("user");
   expect(userMsg.message.content).toBe("Help me from the DB");
   expect(userMsg.sessionId).toBe("ses_db1");
 
-  const asstMsg = JSON.parse(lines[1]);
+  const asstMsg = JSON.parse(at(lines, 1));
   expect(asstMsg.type).toBe("assistant");
   expect(asstMsg.message.model).toBe("claude-opus-4-5");
   expect(asstMsg.provider).toBe("anthropic");
@@ -313,7 +315,7 @@ test("falls back to flat files when DB has broken schema", () => {
     expect(fs.existsSync(archivePath)).toBe(true);
 
     const lines = fs.readFileSync(archivePath, "utf-8").trim().split("\n");
-    const userMsg = JSON.parse(lines[0]);
+    const userMsg = JSON.parse(at(lines, 0));
     expect(userMsg.message.content).toBe("Flat file fallback");
   } finally {
     fs.rmSync(home, { recursive: true, force: true });

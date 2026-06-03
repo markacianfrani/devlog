@@ -1,6 +1,8 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import path from "node:path";
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+
 import { loadConfig } from "./config.ts";
 import { getDb, getReadonlyDb } from "./db.ts";
 import { slugFromPath } from "./sources/shared.ts";
@@ -104,7 +106,7 @@ function registerSearch(server: McpServer) {
 					 ORDER BY rank
 					 LIMIT ?`,
         )
-        .all(query, limit ?? 10);
+        .all(query, limit);
 
       if (rows.length === 0) {
         return { content: [{ type: "text", text: "No results found." }] };
@@ -143,8 +145,7 @@ function registerListSessions(server: McpServer) {
     async ({ project, source, limit }) => {
       const db = getDb(CONFIGURED_DB_PATH);
 
-      // SQLite requires null (not undefined) to bind SQL NULL — disable unicorn/no-null here
-      /* eslint-disable unicorn/no-null */
+      // SQLite requires null (not undefined) to bind SQL NULL
       let projectExact: string | null = null;
       let projectLike: string | null = null;
       if (project) {
@@ -155,7 +156,6 @@ function registerListSessions(server: McpServer) {
         }
       }
       const sourceParam: string | null = source ?? null;
-      /* eslint-enable unicorn/no-null */
 
       const rows = db
         .query<
@@ -178,15 +178,7 @@ function registerListSessions(server: McpServer) {
 					 ORDER BY updated_at DESC NULLS LAST, mtime DESC
 					 LIMIT ?`,
         )
-        .all(
-          projectExact,
-          projectExact,
-          projectLike,
-          projectLike,
-          sourceParam,
-          sourceParam,
-          limit ?? 20,
-        );
+        .all(projectExact, projectExact, projectLike, projectLike, sourceParam, sourceParam, limit);
 
       if (rows.length === 0) {
         return { content: [{ type: "text", text: "No sessions found." }] };
@@ -317,10 +309,10 @@ function registerGetSession(server: McpServer) {
 					   ON cb.file_path = m.file_path AND cb.message_id = m.id
 					 ORDER BY m.rowid, cb.block_index`,
         )
-        .all(session_id, limit ?? 50, offset ?? 0);
+        .all(session_id, limit, offset);
 
       const { messages, order } = groupBlocksByMessage(blocks);
-      const pageEnd = (offset ?? 0) + order.length;
+      const pageEnd = offset + order.length;
       const hasMore = pageEnd < totalMessages;
 
       const lines: string[] = [
@@ -328,7 +320,7 @@ function registerGetSession(server: McpServer) {
         `Source: ${session.source} | Project: ${session.project}`,
         session.cwd ? `CWD: ${session.cwd}` : "",
         session.created_at ? `Date: ${session.created_at}` : "",
-        `Messages: ${(offset ?? 0) + 1}–${pageEnd} of ${totalMessages}${hasMore ? ` (use offset=${pageEnd} for more)` : ""}`,
+        `Messages: ${offset + 1}–${pageEnd} of ${totalMessages}${hasMore ? ` (use offset=${pageEnd} for more)` : ""}`,
         "",
       ].filter((l) => l !== "");
 

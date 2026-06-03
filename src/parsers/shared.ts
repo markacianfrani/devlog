@@ -1,4 +1,5 @@
 import fs from "node:fs";
+
 import type {
   ContentBlock,
   ContentBlockType,
@@ -71,8 +72,9 @@ export class ParseWarningCollector {
   add(draft: WarningDraft): void {
     const key = [draft.kind, draft.context ?? "", draft.type ?? "", draft.message].join("\0");
     const existingIndex = this.warningIndexes.get(key);
-    if (existingIndex !== undefined) {
-      this.warnings[existingIndex].count = (this.warnings[existingIndex].count ?? 1) + 1;
+    const existing = existingIndex === undefined ? undefined : this.warnings[existingIndex];
+    if (existing !== undefined) {
+      existing.count = (existing.count ?? 1) + 1;
       return;
     }
 
@@ -130,7 +132,7 @@ export function getFirstTextPreview(
   maxLength: number = 200,
 ): string | undefined {
   const firstText = contentBlocks.find((block) => block.type === "text");
-  if (!firstText || firstText.type !== "text") {
+  if (!firstText) {
     return undefined;
   }
   return firstText.text.slice(0, maxLength);

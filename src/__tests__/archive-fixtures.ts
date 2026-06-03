@@ -6,6 +6,16 @@ export const BIN_PATH = path.join(REPO_ROOT, "src", "cli.ts");
 export const FIXTURES_DIR = path.join(import.meta.dir, "fixtures");
 export const WORKSPACE_HASH = "5c9dbe89c9230dfefb77d96d9a7d13853999ce23";
 
+// Index into an array, throwing if the element is absent. Lets tests read
+// fixture elements without tripping noUncheckedIndexedAccess at every access.
+export function at<T>(items: readonly T[], index: number): T {
+  const value = items[index];
+  if (value === undefined) {
+    throw new Error(`Expected an element at index ${index}, found none`);
+  }
+  return value;
+}
+
 export async function withEnv<T>(
   name: string,
   value: string | undefined,
@@ -111,8 +121,7 @@ export function setupOpenCodeSession(
   const projectDir = path.join(storageDir, "project");
   writeJson(path.join(projectDir, `${opts.workspaceHash}.json`), { worktree: opts.worktree });
 
-  for (let i = 0; i < opts.messages.length; i++) {
-    const msg = opts.messages[i];
+  for (const [i, msg] of opts.messages.entries()) {
     const messageDir = path.join(storageDir, "message", opts.sessionId);
     writeJson(path.join(messageDir, `${msg.id}.json`), {
       id: msg.id,

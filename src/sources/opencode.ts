@@ -1,15 +1,16 @@
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
-import path from "node:path";
 import os from "node:os";
+import path from "node:path";
+
 import { loadConfig } from "../config.ts";
 import {
   createLogger,
   DEFAULT_CLI_OPTIONS,
   type CliOptions,
+  type ProgressReporter,
   type SourceSummary,
 } from "../progress.ts";
-import type { ProgressReporter } from "../progress.ts";
 import { ensureDir, slugFromPath, matchesExcludedProject } from "./shared.ts";
 import {
   createArchiveStats,
@@ -166,7 +167,10 @@ export function reconstructSessionJsonl(
       cwd: session.directory,
       message: {
         role: msg.role,
-        content: msg.role === "user" ? ((content[0] as { text?: string })?.text ?? "") : content,
+        content:
+          msg.role === "user"
+            ? ((content[0] as { text?: string } | undefined)?.text ?? "")
+            : content,
         ...(msg.modelID && { model: msg.modelID }),
       },
       ...(msg.providerID && { provider: msg.providerID }),
@@ -599,7 +603,7 @@ function archiveFromDb(
     return { handled: true, summary: makeSummary("opencode", stats, "messages") };
   } catch (err) {
     progress?.warn(
-      `[devlog] Failed to read opencode DB, falling back to flat files: ${err instanceof Error ? err.message : err}`,
+      `[devlog] Failed to read opencode DB, falling back to flat files: ${err instanceof Error ? err.message : String(err)}`,
     );
     return {
       handled: false,

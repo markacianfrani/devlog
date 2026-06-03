@@ -1,4 +1,5 @@
 import path from "node:path";
+
 import {
   isObjectRecord,
   ParseWarningCollector,
@@ -39,6 +40,7 @@ const NON_MESSAGE_TYPES = new Set([
   "mode",
   "attachment",
   "worktree-state",
+  "bridge-session",
 ]);
 const KNOWN_TYPES = new Set([...NON_MESSAGE_TYPES, ...MESSAGE_ROLES, "pr-link"]);
 
@@ -136,7 +138,7 @@ function extractParentSessionIdFromPath(jsonlPath: string): string | undefined {
     return undefined;
   }
   const candidate = parts[subagentsIndex - 1];
-  return UUID_PATTERN.test(candidate) ? candidate : undefined;
+  return candidate !== undefined && UUID_PATTERN.test(candidate) ? candidate : undefined;
 }
 
 function parseClaudeJsonLine(line: string): ClaudeRecord | undefined {

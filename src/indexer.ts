@@ -1,14 +1,14 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+
 import type { Source } from "./config.ts";
+import { isSource, type ParseResult, type ParseWarning } from "./parsers/types.ts";
 import {
   createIndexRedactionContext,
   redactForIndexing,
   type IndexRedactionContext,
 } from "./redaction.ts";
-import { isSource, type ParseResult } from "./parsers/types.ts";
-import type { ParseWarning } from "./parsers/types.ts";
 import { SOURCE_ADAPTERS } from "./sources/registry.ts";
 
 export interface IndexFailure {
@@ -85,7 +85,6 @@ function deleteSession(db: Database, filePath: string, sessionId: string) {
 
 // SQLite requires null (not undefined) for NULL values
 // biome-ignore lint: SQLite bindings require null literals
-// eslint-disable-next-line unicorn/no-null
 const SQL_NULL = null;
 
 function toSqlValue<T>(value: T | undefined): T | null {
@@ -164,8 +163,7 @@ function insertMessages(db: Database, result: ParseResult, filePath: string) {
     );
 
     const textParts: string[] = [];
-    for (let i = 0; i < msg.content.length; i++) {
-      const block = msg.content[i];
+    for (const [i, block] of msg.content.entries()) {
       let text: string | null = SQL_NULL;
       let toolName: string | null = SQL_NULL;
       let toolInput: string | null = SQL_NULL;
@@ -184,12 +182,12 @@ function insertMessages(db: Database, result: ParseResult, filePath: string) {
         case "redacted_thinking":
           break;
         case "tool_use":
-          toolName = block.toolName ?? SQL_NULL;
+          toolName = block.toolName;
           toolInput = block.toolInput ?? SQL_NULL;
           toolUseId = block.toolUseId ?? SQL_NULL;
           break;
         case "tool_result":
-          toolOutput = block.toolOutput ?? SQL_NULL;
+          toolOutput = block.toolOutput;
           toolUseId = block.toolUseId ?? SQL_NULL;
           break;
         case "image":
@@ -326,7 +324,7 @@ function getProjectAndSource(
   const project = parts[1];
   const source = parts[2];
 
-  if (!isSource(source)) {
+  if (project === undefined || source === undefined || !isSource(source)) {
     return undefined;
   }
 

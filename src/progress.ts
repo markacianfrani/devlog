@@ -1,6 +1,7 @@
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import readline from "node:readline";
+import { pathToFileURL } from "node:url";
+
 import type { ParseWarning } from "./parsers/types.ts";
 
 export interface CliOptions {

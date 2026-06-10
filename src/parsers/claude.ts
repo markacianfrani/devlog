@@ -44,6 +44,10 @@ const NON_MESSAGE_TYPES = new Set([
 ]);
 const KNOWN_TYPES = new Set([...NON_MESSAGE_TYPES, ...MESSAGE_ROLES, "pr-link"]);
 
+// Content blocks that carry session metadata, not conversation content.
+// "fallback" records a mid-session model switch (e.g. fable-5 -> opus-4-8).
+const SKIP_BLOCK_TYPES = new Set(["fallback"]);
+
 interface ClaudeRecord {
   type: string;
   sessionId?: string;
@@ -279,7 +283,7 @@ export async function parseClaudeSession(
 
     updateSessionState(state, record);
 
-    const contentBlocks = lineContext.parseContent(record.message?.content);
+    const contentBlocks = lineContext.parseContent(record.message?.content, SKIP_BLOCK_TYPES);
     const usage = record.message?.usage;
     const hasUsage = (usage?.input_tokens ?? 0) > 0 || (usage?.output_tokens ?? 0) > 0;
     if (contentBlocks.length === 0 && !hasUsage) {

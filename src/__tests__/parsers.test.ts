@@ -185,6 +185,18 @@ describe("Claude parser", () => {
     expect(unknownBridge).toEqual([]);
   });
 
+  test("skips fallback content blocks without an unknown-type warning", async () => {
+    const outcome = await parseClaudeSession(
+      path.join(FIXTURES_DIR, "claude-noise.jsonl"),
+      "test-project",
+    );
+
+    const unknownFallback = outcome.warnings.filter(
+      (w) => w.kind === "unknown-content-block-type" && w.type === "fallback",
+    );
+    expect(unknownFallback).toEqual([]);
+  });
+
   test("preserves thinking blocks and token data from thinking-only assistant messages", async () => {
     const result = expectParsed(
       await parseClaudeSession(

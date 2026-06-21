@@ -1,3 +1,4 @@
+import { getPiExtensionRenderer } from "./pi-extensions.ts";
 import {
   getFirstTextPreview,
   isObjectRecord,
@@ -70,6 +71,7 @@ interface PiGenericEntry {
   parentSession?: string;
   customType?: string;
   content?: unknown;
+  data?: unknown;
   summary?: string;
   label?: string;
   targetId?: string;
@@ -83,6 +85,7 @@ const KNOWN_TYPES = new Set([
   "model_change",
   "session_info",
   "custom_message",
+  "custom",
   "compaction",
   "branch_summary",
   "label",
@@ -360,6 +363,44 @@ function buildCustomMessage(
   });
 }
 
+/**
+ * `custom` is pi's generic extension envelope. We route by `customType` through
+ * the extension registry. An unrecognized extension still warns, but named by
+ * the extension itself rather than the opaque `"custom"`.
+ */
+function buildCustomExtensionMessage(
+  entry: PiGenericEntry,
+  sessionId: string | undefined,
+  lineContext: ParseLineContext,
+): CleanMessage | undefined {
+  const renderer =
+    typeof entry.customType === "string" ? getPiExtensionRenderer(entry.customType) : undefined;
+  if (!renderer) {
+    lineContext.unknownType(entry.customType ?? "custom", "record");
+    return undefined;
+  }
+
+  // A recognized extension whose payload isn't even an object is malformed, not
+  // empty — surface it instead of dropping it silently the way a null goal is.
+  if (!isObjectRecord(entry.data)) {
+    lineContext.missingField(`Malformed payload for custom extension "${entry.customType}"`);
+    return undefined;
+  }
+
+  const rendered = renderer(entry.data);
+  if (!rendered) {
+    return undefined;
+  }
+
+  return buildSyntheticPiTextMessage(
+    entry,
+    sessionId,
+    rendered.tagName,
+    rendered.body,
+    rendered.attributes,
+  );
+}
+
 function buildPiSummaryMessage(
   entry: PiGenericEntry,
   sessionId: string | undefined,
@@ -407,6 +448,13 @@ function parsePiEntry(
 
   if (entry.type === "custom_message") {
     return { malformed: false, message: buildCustomMessage(entry, state.sessionId) };
+  }
+
+  if (entry.type === "custom") {
+    return {
+      malformed: false,
+      message: buildCustomExtensionMessage(entry, state.sessionId, lineContext),
+    };
   }
 
   if (entry.type === "compaction" || entry.type === "branch_summary") {

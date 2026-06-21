@@ -515,6 +515,113 @@ describe("Pi parser", () => {
     expect(text).toContain("Subagent finished: here is the synthesized finding.");
   });
 
+  test("renders pi web-search-results custom records with truncated snippets", async () => {
+    const result = expectParsed(
+      await parsePiSession(path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl"), "test-project"),
+    );
+
+    const search = result.messages.find((m) =>
+      m.content.some((b) => b.type === "text" && b.text.includes("HEADMARKER_FART")),
+    );
+    if (!search) {
+      throw new Error("Expected a web-search-results fetch message to be surfaced");
+    }
+    expect(search.role).toBe("user");
+
+    const text = (search.content[0] as TextContentBlock).text;
+    expect(text).toContain("https://example.com/fart-facts");
+    expect(text).toContain("The Science of Farts");
+    // Snippet is truncated, so the head survives but the tail past ~300 chars is dropped.
+    expect(text).toContain("HEADMARKER_FART");
+    expect(text).not.toContain("TAILMARKER_FART");
+    // Failed fetches surface their error, not silent emptiness.
+    expect(text).toContain("https://example.com/missing-fart");
+    expect(text).toContain("timed out smelling the fart");
+  });
+
+  test("renders pi web-search-results search records with query, answer snippet, and sources", async () => {
+    const result = expectParsed(
+      await parsePiSession(path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl"), "test-project"),
+    );
+
+    const search = result.messages.find((m) =>
+      m.content.some((b) => b.type === "text" && b.text.includes("FART_QUERY")),
+    );
+    if (!search) {
+      throw new Error("Expected a web-search-results search message to be surfaced");
+    }
+    expect(search.role).toBe("user");
+
+    const text = (search.content[0] as TextContentBlock).text;
+    expect(text).toContain("FART_QUERY beans nutrition facts");
+    // The synthesized answer is the payload, but still snippet-truncated.
+    expect(text).toContain("ANSWER_HEAD");
+    expect(text).not.toContain("ANSWER_TAIL");
+    // Sources keep title + url so the search stays traceable.
+    expect(text).toContain("Bean Science");
+    expect(text).toContain("https://example.com/bean-science");
+  });
+
+  test("renders an active goal-state and silently skips a null goal", async () => {
+    const outcome = await parsePiSession(
+      path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl"),
+      "test-project",
+    );
+    const result = expectParsed(outcome);
+
+    const goals = result.messages.filter((m) =>
+      m.content.some((b) => b.type === "text" && b.text.includes("pi:goal-state")),
+    );
+    // Two goal-state records in the fixture: the active one renders, the null one does not.
+    expect(goals).toHaveLength(1);
+    const goal = goals[0];
+    if (!goal) {
+      throw new Error("Expected a goal-state message to be surfaced");
+    }
+
+    const text = (goal.content[0] as TextContentBlock).text;
+    expect(text).toContain("ship the fart detector");
+    expect(text).toContain("active");
+    expect(text).toContain("4242");
+    expect(text).toContain("617");
+
+    // A null goal is legitimately empty, not malformed: skipped without a warning.
+    expect(outcome.warnings.some((w) => w.message.includes("goal-state"))).toBe(false);
+  });
+
+  test("warns when a recognized pi extension carries a malformed payload", async () => {
+    const outcome = await parsePiSession(
+      path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl"),
+      "test-project",
+    );
+    expectParsed(outcome);
+
+    // A recognized extension (web-search-results) whose `data` is a string, not an
+    // object — a silent drop would hide a real record, so it must warn.
+    expect(
+      outcome.warnings.some(
+        (w) => w.kind === "missing-field" && w.message.includes("web-search-results"),
+      ),
+    ).toBe(true);
+  });
+
+  test("warns by extension name for unrecognized pi custom records", async () => {
+    const filePath = path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl");
+    const outcome = await parsePiSession(filePath, "test-project");
+    expectParsed(outcome);
+
+    const unknown = outcome.warnings.filter((w) => w.kind === "unknown-record-type");
+    expect(unknown).toEqual([
+      expect.objectContaining({
+        kind: "unknown-record-type",
+        parserName: "pi-parser",
+        message: '[pi-parser] Unknown record type: "fart-o-matic"',
+        type: "fart-o-matic",
+        context: "record",
+      }),
+    ]);
+  });
+
   test("returns structured warnings for unknown pi record types", async () => {
     const filePath = path.join(FIXTURES_DIR, "pi-unknown-record.jsonl");
     const outcome = await parsePiSession(filePath, "test-project");
@@ -524,12 +631,12 @@ describe("Pi parser", () => {
       expect.objectContaining({
         kind: "unknown-record-type",
         parserName: "pi-parser",
-        message: '[pi-parser] Unknown record type: "custom"',
+        message: '[pi-parser] Unknown record type: "fart-record"',
         filePath,
         lineNumber: 3,
         count: 1,
         context: "record",
-        type: "custom",
+        type: "fart-record",
       }),
     ]);
   });
@@ -543,12 +650,12 @@ describe("Pi parser", () => {
       expect.objectContaining({
         kind: "unknown-record-type",
         parserName: "pi-parser",
-        message: '[pi-parser] Unknown record type: "custom"',
+        message: '[pi-parser] Unknown record type: "fart-record"',
         filePath,
         lineNumber: 2,
         count: 1,
         context: "record",
-        type: "custom",
+        type: "fart-record",
       }),
     ]);
   });
@@ -571,7 +678,7 @@ describe("Pi parser", () => {
     expect(unknownWarnings).toHaveLength(1);
     expect(unknownWarnings[0]).toEqual(
       expect.objectContaining({
-        type: "custom",
+        type: "fart-record",
         count: 3,
         lineNumber: 3,
       }),
@@ -853,12 +960,12 @@ describe("formatParseWarning", () => {
     const warning: ParseWarning = {
       kind: "unknown-record-type",
       parserName: "pi-parser",
-      message: '[pi-parser] Unknown record type: "custom"',
+      message: '[pi-parser] Unknown record type: "fart-record"',
       filePath: "/test/file.jsonl",
       lineNumber: 3,
       count: 4,
       context: "record",
-      type: "custom",
+      type: "fart-record",
     };
     const formatted = formatParseWarning(warning);
     expect(formatted).toContain("(4 occurrences)");
@@ -868,12 +975,12 @@ describe("formatParseWarning", () => {
     const warning: ParseWarning = {
       kind: "unknown-record-type",
       parserName: "pi-parser",
-      message: '[pi-parser] Unknown record type: "custom"',
+      message: '[pi-parser] Unknown record type: "fart-record"',
       filePath: "/test/file.jsonl",
       lineNumber: 2,
       count: 1,
       context: "record",
-      type: "custom",
+      type: "fart-record",
     };
     const formatted = formatParseWarning(warning);
     expect(formatted).not.toContain("occurrences");

@@ -9,11 +9,13 @@ import {
 } from "./shared.ts";
 import {
   MESSAGE_ROLES,
+  createArtifactLink,
   createAssistantMessage,
   createPrLink,
   createUserMessage,
   finalizeParseResult,
   isUserContentBlock,
+  type ArtifactLink,
   type CleanMessage,
   type ContentBlock,
   type ParseOutcome,
@@ -42,7 +44,7 @@ const NON_MESSAGE_TYPES = new Set([
   "worktree-state",
   "bridge-session",
 ]);
-const KNOWN_TYPES = new Set([...NON_MESSAGE_TYPES, ...MESSAGE_ROLES, "pr-link"]);
+const KNOWN_TYPES = new Set([...NON_MESSAGE_TYPES, ...MESSAGE_ROLES, "pr-link", "frame-link"]);
 
 // Content blocks that carry session metadata, not conversation content.
 // "fallback" records a mid-session model switch (e.g. fable-5 -> opus-4-8).
@@ -64,6 +66,8 @@ interface ClaudeRecord {
   prNumber?: number;
   prUrl?: string;
   prRepository?: string;
+  path?: string;
+  frameUrl?: string;
   worktreeSession?: {
     originalCwd?: string;
     worktreePath?: string;
@@ -251,6 +255,22 @@ function collectPrLink(record: ClaudeRecord, prLinkMap: Map<string, PrLink>): vo
   }
 }
 
+function collectArtifactLink(
+  record: ClaudeRecord,
+  artifactLinkMap: Map<string, ArtifactLink>,
+): void {
+  const link = createArtifactLink({
+    sessionId: record.sessionId,
+    path: record.path,
+    artifactUrl: record.frameUrl,
+    timestamp: record.timestamp,
+  });
+
+  if (link) {
+    artifactLinkMap.set(link.artifactUrl, link);
+  }
+}
+
 export async function parseClaudeSession(
   jsonlPath: string,
   project: string,
@@ -260,6 +280,7 @@ export async function parseClaudeSession(
   const messageMap = new Map<string, CleanMessage>();
   const messageOrder: string[] = [];
   const prLinkMap = new Map<string, PrLink>();
+  const artifactLinkMap = new Map<string, ArtifactLink>();
   const state: SessionState = {};
   const warnings = new ParseWarningCollector("claude-parser", jsonlPath);
   let malformedLines = 0;
@@ -274,6 +295,11 @@ export async function parseClaudeSession(
 
     if (record.type === "pr-link") {
       collectPrLink(record, prLinkMap);
+      continue;
+    }
+
+    if (record.type === "frame-link") {
+      collectArtifactLink(record, artifactLinkMap);
       continue;
     }
 
@@ -323,6 +349,7 @@ export async function parseClaudeSession(
     },
     messages,
     prLinks: [...prLinkMap.values()],
+    artifactLinks: [...artifactLinkMap.values()],
   });
 
   return { result, warnings: warnings.toArray() };

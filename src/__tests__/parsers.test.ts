@@ -234,6 +234,32 @@ describe("Claude parser", () => {
     });
   });
 
+  test("extracts frame-link records as artifact links", async () => {
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-noise.jsonl"), "test-project"),
+    );
+
+    expect(result.artifactLinks).toHaveLength(1);
+    expect(result.artifactLinks[0]).toEqual({
+      sessionId: "test-session-4",
+      path: "/home/user/project/scratchpad/fart-chart.html",
+      artifactUrl: "https://claude.ai/code/artifact/fart-a-doodle-doo",
+      timestamp: "2026-01-20T10:00:03.000Z",
+    });
+  });
+
+  test("skips frame-link records without an unknown-type warning", async () => {
+    const outcome = await parseClaudeSession(
+      path.join(FIXTURES_DIR, "claude-noise.jsonl"),
+      "test-project",
+    );
+
+    const unknownFrame = outcome.warnings.filter(
+      (w) => w.kind === "unknown-record-type" && w.type === "frame-link",
+    );
+    expect(unknownFrame).toEqual([]);
+  });
+
   test("extracts session title from summary record", async () => {
     const result = expectParsed(
       await parseClaudeSession(path.join(FIXTURES_DIR, "claude-noise.jsonl"), "test-project"),

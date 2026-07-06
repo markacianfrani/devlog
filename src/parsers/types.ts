@@ -130,6 +130,16 @@ export interface PrLink {
   timestamp: string;
 }
 
+// Claude Code writes a frame-link record when a scratchpad HTML file is
+// published as an Artifact. `path` is the local file that produced it;
+// `artifactUrl` is the hosted claude.ai page (the source record calls it frameUrl).
+export interface ArtifactLink {
+  sessionId: string;
+  path: string;
+  artifactUrl: string;
+  timestamp: string;
+}
+
 export type UnknownWarningContext = "record" | "content block";
 
 export type ParseWarningKind =
@@ -153,6 +163,7 @@ export interface ParseResult {
   meta: SessionMeta;
   messages: CleanMessage[];
   prLinks: PrLink[];
+  artifactLinks: ArtifactLink[];
 }
 
 export interface ParseOutcome {
@@ -195,10 +206,18 @@ export interface PrLinkDraft {
   timestamp?: string;
 }
 
+export interface ArtifactLinkDraft {
+  sessionId?: string;
+  path?: string;
+  artifactUrl?: string;
+  timestamp?: string;
+}
+
 export interface ParseResultDraft {
   meta: SessionMetaDraft;
   messages: CleanMessage[];
   prLinks: PrLink[];
+  artifactLinks: ArtifactLink[];
 }
 
 function isNonEmptyString(value: string | undefined): value is string {
@@ -313,8 +332,30 @@ export function createPrLink(draft: PrLinkDraft): PrLink | undefined {
   };
 }
 
+export function createArtifactLink(draft: ArtifactLinkDraft): ArtifactLink | undefined {
+  if (
+    !isNonEmptyString(draft.sessionId) ||
+    !isNonEmptyString(draft.path) ||
+    !isNonEmptyString(draft.artifactUrl) ||
+    !isNonEmptyString(draft.timestamp)
+  ) {
+    return undefined;
+  }
+
+  return {
+    sessionId: draft.sessionId,
+    path: draft.path,
+    artifactUrl: draft.artifactUrl,
+    timestamp: draft.timestamp,
+  };
+}
+
 export function finalizeParseResult(draft: ParseResultDraft): ParseResult | undefined {
-  const sessionId = draft.meta.id ?? draft.messages[0]?.sessionId ?? draft.prLinks[0]?.sessionId;
+  const sessionId =
+    draft.meta.id ??
+    draft.messages[0]?.sessionId ??
+    draft.prLinks[0]?.sessionId ??
+    draft.artifactLinks[0]?.sessionId;
   const meta = createSessionMeta({ ...draft.meta, id: sessionId });
   if (!meta) {
     return undefined;
@@ -326,5 +367,6 @@ export function finalizeParseResult(draft: ParseResultDraft): ParseResult | unde
   }
 
   const prLinks = draft.prLinks.filter((link) => link.sessionId === meta.id);
-  return { meta, messages, prLinks };
+  const artifactLinks = draft.artifactLinks.filter((link) => link.sessionId === meta.id);
+  return { meta, messages, prLinks, artifactLinks };
 }

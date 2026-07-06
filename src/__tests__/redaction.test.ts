@@ -59,6 +59,14 @@ function makeParseResult(text: string): ParseResult {
         timestamp: "2026-01-01T00:00:00.000Z",
       },
     ],
+    artifactLinks: [
+      {
+        sessionId: "session-1",
+        path: `/home/user/scratchpad/fart-${text}.html`,
+        artifactUrl: `https://claude.ai/code/artifact/fart-${text}`,
+        timestamp: "2026-01-01T00:00:00.000Z",
+      },
+    ],
   };
 }
 
@@ -69,6 +77,7 @@ describe("redaction", () => {
       original.meta.id = "session-12345";
       at(original.messages, 0).sessionId = "session-12345";
       at(original.prLinks, 0).sessionId = "session-12345";
+      at(original.artifactLinks, 0).sessionId = "session-12345";
 
       const redacted = redactForIndexing(original);
       const redactedText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
@@ -78,6 +87,11 @@ describe("redaction", () => {
       expect(at(redacted.prLinks, 0).sessionId).toBe("session-12345");
       expect(at(redacted.prLinks, 0).prUrl).toContain("[REDACTED:devlog-test-secret-token-scope]");
       expect(at(redacted.prLinks, 0).prUrl).not.toContain("session-12345");
+      expect(at(redacted.artifactLinks, 0).sessionId).toBe("session-12345");
+      expect(at(redacted.artifactLinks, 0).artifactUrl).toContain(
+        "[REDACTED:devlog-test-secret-token-scope]",
+      );
+      expect(at(redacted.artifactLinks, 0).artifactUrl).not.toContain("session-12345");
 
       expect(redacted.meta.title).toBe("[REDACTED:devlog-test-secret-token-scope]");
       expect(redactedText).toBe("[REDACTED:devlog-test-secret-token-scope]");

@@ -346,7 +346,14 @@ function registerSchema(server: McpServer) {
     {},
     () => {
       const db = getDb(CONFIGURED_DB_PATH);
-      const tables = ["sessions", "messages", "content_blocks", "pr_links", "messages_fts"];
+      const tables = [
+        "sessions",
+        "messages",
+        "content_blocks",
+        "pr_links",
+        "artifact_links",
+        "messages_fts",
+      ];
       const lines: string[] = [];
       for (const table of tables) {
         const cols = db

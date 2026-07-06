@@ -76,7 +76,16 @@ export interface PrLinkRow {
   timestamp: string | null;
 }
 
-const SCHEMA_VERSION = 12;
+export interface ArtifactLinkRow {
+  id: number;
+  file_path: string;
+  session_id: string;
+  path: string;
+  artifact_url: string;
+  timestamp: string | null;
+}
+
+const SCHEMA_VERSION = 13;
 const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;
@@ -185,6 +194,21 @@ CREATE INDEX IF NOT EXISTS idx_pr_links_file_path ON pr_links(file_path);
 CREATE INDEX IF NOT EXISTS idx_pr_links_session_id ON pr_links(session_id);
 CREATE INDEX IF NOT EXISTS idx_pr_links_repository ON pr_links(pr_repository);
 
+-- Artifact links table (normalized — most sessions have none, some publish multiple).
+-- Written from claude frame-link records; path is the local scratchpad file, artifact_url the hosted page.
+CREATE TABLE IF NOT EXISTS artifact_links (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	file_path TEXT NOT NULL,
+	session_id TEXT NOT NULL,
+	path TEXT NOT NULL,
+	artifact_url TEXT NOT NULL,
+	timestamp TEXT,
+	FOREIGN KEY (file_path) REFERENCES sessions(file_path) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_links_file_path ON artifact_links(file_path);
+CREATE INDEX IF NOT EXISTS idx_artifact_links_session_id ON artifact_links(session_id);
+
 -- FTS table for full-text search
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 	session_id,
@@ -218,6 +242,7 @@ function initializeSchema(database: Database) {
     database.exec("DROP TABLE IF EXISTS messages_fts");
     database.exec("DROP TABLE IF EXISTS content_blocks");
     database.exec("DROP TABLE IF EXISTS pr_links");
+    database.exec("DROP TABLE IF EXISTS artifact_links");
     database.exec("DROP TABLE IF EXISTS session_worktrees");
     database.exec("DROP TABLE IF EXISTS messages");
     database.exec("DROP TABLE IF EXISTS sessions");

@@ -502,6 +502,23 @@ describe("indexer", () => {
     expect(at(prLinks, 0).pr_repository).toBe("example-org/web-app");
   });
 
+  test("indexes frame-link records into artifact_links table", async () => {
+    const db = getDb(dbPath);
+    await indexSession(path.join(FIXTURES_DIR, "claude-noise.jsonl"), "claude", "test-project", db);
+
+    const artifactLinks = db
+      .query<{ path: string; artifact_url: string }, []>(
+        "SELECT path, artifact_url FROM artifact_links",
+      )
+      .all();
+
+    expect(artifactLinks).toHaveLength(1);
+    expect(at(artifactLinks, 0).path).toBe("/home/user/project/scratchpad/fart-chart.html");
+    expect(at(artifactLinks, 0).artifact_url).toBe(
+      "https://claude.ai/code/artifact/fart-a-doodle-doo",
+    );
+  });
+
   test("populates FTS index for searching", async () => {
     const db = getDb(dbPath);
     await indexSession(

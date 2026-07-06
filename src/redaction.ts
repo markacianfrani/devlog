@@ -1,4 +1,5 @@
 import type {
+  ArtifactLink,
   CleanMessage,
   ContentBlock,
   ParseResult,
@@ -239,6 +240,24 @@ function redactPrLink(link: PrLink, literalSecrets: NormalizedLiteralSecrets): P
   };
 }
 
+function redactArtifactLink(
+  link: ArtifactLink,
+  literalSecrets: NormalizedLiteralSecrets,
+): ArtifactLink {
+  const artifactUrl = redactText(link.artifactUrl, literalSecrets);
+  const path = redactText(link.path, literalSecrets);
+
+  if (artifactUrl === link.artifactUrl && path === link.path) {
+    return link;
+  }
+
+  return {
+    ...link,
+    artifactUrl,
+    path,
+  };
+}
+
 export function createIndexRedactionContext(env: Environment = process.env): IndexRedactionContext {
   return {
     literalSecrets: collectLiteralSecrets(env),
@@ -256,6 +275,7 @@ export function redactForIndexing(
     meta: redactMeta(result.meta, literalSecrets),
     messages: result.messages.map((message) => redactMessage(message, literalSecrets)),
     prLinks: result.prLinks.map((link) => redactPrLink(link, literalSecrets)),
+    artifactLinks: result.artifactLinks.map((link) => redactArtifactLink(link, literalSecrets)),
     redacted: true,
   };
 }

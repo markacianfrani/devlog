@@ -199,6 +199,7 @@ export async function parseOpenCodeSession(
     },
     messages,
     prLinks: [],
+    artifactLinks: [],
   });
 
   return { result, warnings: warnings.toArray() };

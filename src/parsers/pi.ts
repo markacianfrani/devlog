@@ -521,6 +521,7 @@ export async function parsePiSession(jsonlPath: string, project: string): Promis
     },
     messages,
     prLinks: [],
+    artifactLinks: [],
   });
 
   return { result, warnings: warnings.toArray() };

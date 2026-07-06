@@ -238,6 +238,21 @@ function insertPrLinks(db: Database, result: ParseResult, filePath: string) {
   }
 }
 
+function insertArtifactLinks(db: Database, result: ParseResult, filePath: string) {
+  if (result.artifactLinks.length === 0) {
+    return;
+  }
+
+  const insert = db.prepare(
+    `INSERT INTO artifact_links (file_path, session_id, path, artifact_url, timestamp)
+		 VALUES (?, ?, ?, ?, ?)`,
+  );
+
+  for (const link of result.artifactLinks) {
+    insert.run(filePath, result.meta.id, link.path, link.artifactUrl, toSqlValue(link.timestamp));
+  }
+}
+
 export async function indexSession(
   jsonlPath: string,
   source: Source,
@@ -279,6 +294,7 @@ export async function indexSession(
     insertWorktree(db, result, jsonlPath);
     insertMessages(db, result, jsonlPath);
     insertPrLinks(db, result, jsonlPath);
+    insertArtifactLinks(db, result, jsonlPath);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");

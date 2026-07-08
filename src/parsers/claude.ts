@@ -42,6 +42,7 @@ const NON_MESSAGE_TYPES = new Set([
   "mode",
   "attachment",
   "worktree-state",
+  "relocated",
   "bridge-session",
 ]);
 const KNOWN_TYPES = new Set([...NON_MESSAGE_TYPES, ...MESSAGE_ROLES, "pr-link", "frame-link"]);

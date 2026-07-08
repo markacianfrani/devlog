@@ -260,6 +260,18 @@ describe("Claude parser", () => {
     expect(unknownFrame).toEqual([]);
   });
 
+  test("skips relocated records without an unknown-type warning", async () => {
+    const outcome = await parseClaudeSession(
+      path.join(FIXTURES_DIR, "claude-noise.jsonl"),
+      "test-project",
+    );
+
+    const unknownRelocated = outcome.warnings.filter(
+      (w) => w.kind === "unknown-record-type" && w.type === "relocated",
+    );
+    expect(unknownRelocated).toEqual([]);
+  });
+
   test("extracts session title from summary record", async () => {
     const result = expectParsed(
       await parseClaudeSession(path.join(FIXTURES_DIR, "claude-noise.jsonl"), "test-project"),

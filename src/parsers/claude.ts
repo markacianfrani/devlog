@@ -44,6 +44,7 @@ const NON_MESSAGE_TYPES = new Set([
   "worktree-state",
   "relocated",
   "bridge-session",
+  "agent-setting",
 ]);
 const KNOWN_TYPES = new Set([...NON_MESSAGE_TYPES, ...MESSAGE_ROLES, "pr-link", "frame-link"]);
 

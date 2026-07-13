@@ -272,6 +272,18 @@ describe("Claude parser", () => {
     expect(unknownRelocated).toEqual([]);
   });
 
+  test("skips agent-setting records without an unknown-type warning", async () => {
+    const outcome = await parseClaudeSession(
+      path.join(FIXTURES_DIR, "claude-noise.jsonl"),
+      "test-project",
+    );
+
+    const unknownAgentSetting = outcome.warnings.filter(
+      (w) => w.kind === "unknown-record-type" && w.type === "agent-setting",
+    );
+    expect(unknownAgentSetting).toEqual([]);
+  });
+
   test("extracts session title from summary record", async () => {
     const result = expectParsed(
       await parseClaudeSession(path.join(FIXTURES_DIR, "claude-noise.jsonl"), "test-project"),

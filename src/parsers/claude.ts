@@ -31,6 +31,7 @@ import {
 const NON_MESSAGE_TYPES = new Set([
   "progress",
   "file-history-snapshot",
+  "file-history-delta",
   "summary",
   "custom-title",
   "ai-title",

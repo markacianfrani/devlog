@@ -1,6 +1,7 @@
 {"type":"summary","summary":"Test session summary","leafUuid":"msg-asst-1"}
 {"type":"progress","data":{"message":"Loading..."},"uuid":"progress-1"}
 {"type":"file-history-snapshot","messageId":"msg-1","snapshot":{"trackedFileBackups":{}}}
+{"type":"file-history-delta","messageId":"msg-2","snapshotMessageId":"msg-1","trackingPath":"/home/user/project/fart.txt","backup":{},"timestamp":"2026-01-01T00:00:00.000Z"}
 {"type":"system","message":"System message"}
 {"type":"queue-operation","operation":"add"}
 {"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"test-session-4"}

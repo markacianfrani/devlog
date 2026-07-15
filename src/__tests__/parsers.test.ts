@@ -284,6 +284,18 @@ describe("Claude parser", () => {
     expect(unknownAgentSetting).toEqual([]);
   });
 
+  test("skips file-history-delta records without an unknown-type warning", async () => {
+    const outcome = await parseClaudeSession(
+      path.join(FIXTURES_DIR, "claude-noise.jsonl"),
+      "test-project",
+    );
+
+    const unknownDelta = outcome.warnings.filter(
+      (w) => w.kind === "unknown-record-type" && w.type === "file-history-delta",
+    );
+    expect(unknownDelta).toEqual([]);
+  });
+
   test("extracts session title from summary record", async () => {
     const result = expectParsed(
       await parseClaudeSession(path.join(FIXTURES_DIR, "claude-noise.jsonl"), "test-project"),

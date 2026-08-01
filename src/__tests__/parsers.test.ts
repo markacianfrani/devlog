@@ -624,31 +624,36 @@ describe("Pi parser", () => {
     expect(text).toContain("https://example.com/bean-science");
   });
 
-  test("renders an active goal-state and silently skips a null goal", async () => {
+  test("surfaces pi-goal custom records generically without overfitting their schema", async () => {
     const outcome = await parsePiSession(
       path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl"),
       "test-project",
     );
     const result = expectParsed(outcome);
 
-    const goals = result.messages.filter((m) =>
-      m.content.some((b) => b.type === "text" && b.text.includes("pi:goal-state")),
+    // pi-goal is a pi-owned custom extension whose payload shape can change, so
+    // we serialize it verbatim instead of hand-fitting field names. Both records
+    // in the fixture surface (uniform handling — a null goal is no longer
+    // special-cased into a silent skip).
+    const goalMsgs = result.messages.filter((m) =>
+      m.content.some((b) => b.type === "text" && b.text.includes('customType="pi-goal"')),
     );
-    // Two goal-state records in the fixture: the active one renders, the null one does not.
-    expect(goals).toHaveLength(1);
-    const goal = goals[0];
-    if (!goal) {
-      throw new Error("Expected a goal-state message to be surfaced");
+    expect(goalMsgs).toHaveLength(2);
+
+    const active = goalMsgs.find((m) =>
+      m.content.some((b) => b.type === "text" && b.text.includes("ship the fart detector")),
+    );
+    expect(active).toBeDefined();
+    if (!active) {
+      throw new Error("Expected the active pi-goal objective to be surfaced");
     }
 
-    const text = (goal.content[0] as TextContentBlock).text;
-    expect(text).toContain("ship the fart detector");
-    expect(text).toContain("active");
-    expect(text).toContain("4242");
-    expect(text).toContain("617");
+    const text = (active.content[0] as TextContentBlock).text;
+    expect(text).toContain("<pi:custom ");
+    expect(text).toContain('"ship the fart detector"');
 
-    // A null goal is legitimately empty, not malformed: skipped without a warning.
-    expect(outcome.warnings.some((w) => w.message.includes("goal-state"))).toBe(false);
+    // Custom records are handled, not errors — no warnings name them.
+    expect(outcome.warnings.some((w) => w.message.includes("pi-goal"))).toBe(false);
   });
 
   test("warns when a recognized pi extension carries a malformed payload", async () => {
@@ -667,21 +672,19 @@ describe("Pi parser", () => {
     ).toBe(true);
   });
 
-  test("warns by extension name for unrecognized pi custom records", async () => {
+  test("surfaces unrecognized pi custom records generically instead of warning", async () => {
     const filePath = path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl");
     const outcome = await parsePiSession(filePath, "test-project");
     expectParsed(outcome);
 
-    const unknown = outcome.warnings.filter((w) => w.kind === "unknown-record-type");
-    expect(unknown).toEqual([
-      expect.objectContaining({
-        kind: "unknown-record-type",
-        parserName: "pi-parser",
-        message: '[pi-parser] Unknown record type: "fart-o-matic"',
-        type: "fart-o-matic",
-        context: "record",
-      }),
-    ]);
+    // An unknown customType is captured verbatim, not warned-and-dropped: custom
+    // extensions are owned by pi/third parties, so variety is normal, not error.
+    const fart = outcome.result?.messages.find((m) =>
+      m.content.some((b) => b.type === "text" && b.text.includes('customType="fart-o-matic"')),
+    );
+    expect(fart).toBeDefined();
+
+    expect(outcome.warnings.some((w) => w.type === "fart-o-matic")).toBe(false);
   });
 
   test("returns structured warnings for unknown pi record types", async () => {
@@ -833,6 +836,50 @@ describe("Pi parser", () => {
     const toolResult = at(at(redacted.messages, 2).content, 0) as ToolResultContentBlock;
     expect(toolResult.toolOutput).toContain("[REDACTED:huggingface-token]");
     expect(toolResult.toolOutput).toContain("[REDACTED:jwt]");
+  });
+
+  test("surfaces pi bashExecution messages as synthetic user messages", async () => {
+    const result = expectParsed(
+      await parsePiSession(path.join(FIXTURES_DIR, "pi-bash-execution.jsonl"), "test-project"),
+    );
+
+    const bash = result.messages.find((m) =>
+      m.content.some((b) => b.type === "text" && b.text.includes("bash-execution")),
+    );
+    if (!bash) {
+      throw new Error("Expected a bash-execution message");
+    }
+    expect(bash.role).toBe("user");
+    expect(bash.id).toBe("b1");
+
+    const text = (bash.content[0] as TextContentBlock).text;
+    expect(text).toContain("<pi:bash-execution");
+    expect(text).toContain('command="ls fart-dir"');
+    expect(text).toContain('exitCode="0"');
+    expect(text).toContain("fart_a.txt");
+    expect(text).toContain("</pi:bash-execution>");
+  });
+
+  test("warns on unrecognized pi message roles instead of dropping silently", async () => {
+    const filePath = path.join(FIXTURES_DIR, "pi-unknown-role.jsonl");
+    const outcome = await parsePiSession(filePath, "test-project");
+    expectParsed(outcome);
+
+    expect(outcome.warnings).toEqual([
+      expect.objectContaining({
+        kind: "unknown-record-type",
+        parserName: "pi-parser",
+        message: '[pi-parser] Unknown record type: "fartEvent"',
+        filePath,
+        lineNumber: 3,
+        count: 1,
+        context: "record",
+        type: "fartEvent",
+      }),
+    ]);
+
+    // The unrecognized-role message is surfaced as a warning, not as content.
+    expect(outcome.result?.messages.some((m) => m.id === "x1")).toBe(false);
   });
 });
 

@@ -1,12 +1,19 @@
 import { isObjectRecord } from "./shared.ts";
 
 /**
- * pi emits a generic `custom` record envelope; third-party extensions stamp
- * their own `customType` and a structured `data` payload. Each renderer here
- * turns one extension's payload into a `<pi:...>` block. Returning `undefined`
- * means "nothing worth surfacing" (e.g. an empty goal) — the core parser skips
- * it without a warning. To support a new extension, add one entry to
- * `PI_EXTENSIONS`; the parser never changes.
+ * pi emits a generic `custom` record envelope; pi itself and third-party
+ * extensions stamp their own `customType` and a structured `data` payload.
+ * Those payloads are owned by their extensions and change independently of
+ * devlog, so we do NOT hand-fit renderers to their internal field names — that
+ * overfits and breaks silently when the schema changes (it did once for
+ * pi-goal, whose renderer read fields that never existed on real records).
+ *
+ * The parser surfaces every custom record via a generic fallback (the payload
+ * serialized verbatim). The renderers here are optional best-effort
+ * enhancements for extensions where structured extraction adds real search
+ * value; if a renderer is missing or returns nothing, the fallback still
+ * captures the record. Add a renderer only when its schema is verified against
+ * real sessions and the nicer output is worth maintaining.
  */
 
 export interface PiExtensionRender {
@@ -106,33 +113,8 @@ function renderSearchQueries(queries: unknown[]): string {
     .join("\n\n");
 }
 
-/** pi-goal: the agent's current goal and how far it's gotten. Null goal => nothing to show. */
-function renderGoalState(data: unknown): PiExtensionRender | undefined {
-  if (!isObjectRecord(data) || !isObjectRecord(data["goal"])) {
-    return undefined;
-  }
-
-  const goal = data["goal"];
-  const text = stringField(goal, "text");
-  if (!text) {
-    return undefined;
-  }
-
-  const status = stringField(goal, "status") || "unknown";
-  const metrics = (["iteration", "tokensUsed", "timeUsedSeconds"] as const)
-    .filter((key) => typeof goal[key] === "number")
-    .map((key) => `${key} ${goal[key] as number}`);
-
-  const body = [text, `status: ${status}`, metrics.join(" · ")]
-    .filter((line) => line.length > 0)
-    .join("\n");
-
-  return { tagName: "goal-state", body };
-}
-
 const PI_EXTENSIONS = new Map<string, PiExtensionRenderer>([
   ["web-search-results", renderWebSearchResults],
-  ["goal-state", renderGoalState],
 ]);
 
 export function getPiExtensionRenderer(customType: string): PiExtensionRenderer | undefined {

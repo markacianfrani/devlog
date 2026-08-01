@@ -49,6 +49,11 @@ interface PiAgentMessage {
   usage?: PiUsage;
   toolCallId?: string;
   toolName?: string;
+  // bashExecution messages carry the command + output at the message level
+  // instead of as content blocks.
+  command?: string;
+  output?: string;
+  exitCode?: number;
 }
 
 interface PiMessageEntry {
@@ -364,41 +369,46 @@ function buildCustomMessage(
 }
 
 /**
- * `custom` is pi's generic extension envelope. We route by `customType` through
- * the extension registry. An unrecognized extension still warns, but named by
- * the extension itself rather than the opaque `"custom"`.
+ * `custom` is pi's generic extension envelope, stamped with a `customType` and
+ * a structured `data` payload owned by the extension (pi or third-party). Those
+ * payloads vary and change independently of devlog, so we never drop a custom
+ * record or overfit to one extension's schema:
+ *
+ *   - if a bespoke renderer is registered and returns a render, use it;
+ *   - otherwise serialize the payload verbatim as a generic `<pi:custom>` block.
+ *
+ * A non-object payload breaks the envelope contract, so that case still warns
+ * rather than guessing at arbitrary string values.
  */
 function buildCustomExtensionMessage(
   entry: PiGenericEntry,
   sessionId: string | undefined,
   lineContext: ParseLineContext,
 ): CleanMessage | undefined {
-  const renderer =
-    typeof entry.customType === "string" ? getPiExtensionRenderer(entry.customType) : undefined;
-  if (!renderer) {
-    lineContext.unknownType(entry.customType ?? "custom", "record");
-    return undefined;
-  }
+  const customType = typeof entry.customType === "string" ? entry.customType : "custom";
 
-  // A recognized extension whose payload isn't even an object is malformed, not
-  // empty — surface it instead of dropping it silently the way a null goal is.
   if (!isObjectRecord(entry.data)) {
-    lineContext.missingField(`Malformed payload for custom extension "${entry.customType}"`);
+    lineContext.missingField(`Malformed payload for custom extension "${customType}"`);
     return undefined;
   }
 
-  const rendered = renderer(entry.data);
-  if (!rendered) {
-    return undefined;
+  const renderer = getPiExtensionRenderer(customType);
+  const rendered = renderer ? renderer(entry.data) : undefined;
+  if (rendered) {
+    return buildSyntheticPiTextMessage(
+      entry,
+      sessionId,
+      rendered.tagName,
+      rendered.body,
+      rendered.attributes,
+    );
   }
 
-  return buildSyntheticPiTextMessage(
-    entry,
-    sessionId,
-    rendered.tagName,
-    rendered.body,
-    rendered.attributes,
-  );
+  // Generic fallback: capture the payload verbatim so unknown or schema-changed
+  // extensions stay searchable instead of vanishing.
+  return buildSyntheticPiTextMessage(entry, sessionId, "custom", JSON.stringify(entry.data), {
+    customType,
+  });
 }
 
 function buildPiSummaryMessage(
@@ -420,6 +430,35 @@ function buildPiSummaryMessage(
   }
 
   return undefined;
+}
+
+/**
+ * pi emits raw shell executions as `bashExecution` messages (command + output +
+ * exitCode). They carry no content blocks, so they fall outside the
+ * user/assistant/toolResult dispatch — surface them as a synthetic
+ * `<pi:bash-execution>` user message so the command and its output stay
+ * searchable instead of being dropped.
+ */
+function buildBashExecutionMessage(
+  entry: PiGenericEntry,
+  sessionId: string | undefined,
+): CleanMessage | undefined {
+  const message = entry.message;
+  const command = typeof message?.command === "string" ? message.command : "";
+  const output = typeof message?.output === "string" ? message.output : "";
+
+  if (!command && !output) {
+    return undefined;
+  }
+
+  // A command may produce no output; fall back to the command text so the
+  // event is still captured (buildSyntheticPiTextMessage drops empty bodies).
+  const body = output.length > 0 ? output : command;
+
+  return buildSyntheticPiTextMessage(entry, sessionId, "bash-execution", body, {
+    ...(command.length > 0 && { command }),
+    ...(typeof message?.exitCode === "number" && { exitCode: String(message.exitCode) }),
+  });
 }
 
 function parsePiEntry(
@@ -465,10 +504,23 @@ function parsePiEntry(
     return { malformed: false };
   }
 
-  if (!isPiMessageEntry(entry) || !isPiMessageRole(entry.message?.role)) {
+  if (!isPiMessageEntry(entry)) {
     if (entry.type && !KNOWN_TYPES.has(entry.type)) {
       lineContext.unknownType(entry.type, "record");
     }
+    return { malformed: false };
+  }
+
+  // bashExecution is a self-contained event (command + output) with no content
+  // blocks, so it lives outside the user/assistant/toolResult union.
+  if (entry.message?.role === "bashExecution") {
+    return { malformed: false, message: buildBashExecutionMessage(entry, state.sessionId) };
+  }
+
+  // Any other unrecognized role is a real record we'd otherwise drop silently —
+  // warn so novel pi roles surface instead of vanishing.
+  if (!isPiMessageRole(entry.message?.role)) {
+    lineContext.unknownType(entry.message?.role ?? "(missing)", "record");
     return { malformed: false };
   }
 

@@ -146,10 +146,6 @@ function parsePiContent(
 
   const blocks: ContentBlock[] = [];
   for (const block of content) {
-    if (block.type === "thinking") {
-      continue;
-    }
-
     if (block.type === "toolCall") {
       if (!block.name) {
         lineContext.missingField("toolCall block missing name");

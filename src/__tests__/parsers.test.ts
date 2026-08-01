@@ -545,11 +545,17 @@ describe("Pi parser", () => {
     expect(assistant.tokensOut).toBe(45);
     expect(assistant.cacheReadTokens).toBe(10);
     expect(assistant.cacheWriteTokens).toBe(5);
-    expect(assistant.content).toHaveLength(2);
-    expect(at(assistant.content, 0).type).toBe("text");
-    expect(at(assistant.content, 1).type).toBe("tool_use");
-    expect((at(assistant.content, 1) as ToolUseContentBlock).toolName).toBe("read");
-    expect((at(assistant.content, 1) as ToolUseContentBlock).toolUseId).toBe("call_1");
+    // pi preserves thinking blocks like claude/opencode — the indexer and
+    // redaction both support them, so reasoning stays searchable.
+    expect(assistant.content).toHaveLength(3);
+    expect(at(assistant.content, 0).type).toBe("thinking");
+    expect((at(assistant.content, 0) as ThinkingContentBlock).thinking).toBe(
+      "private reasoning",
+    );
+    expect(at(assistant.content, 1).type).toBe("text");
+    expect(at(assistant.content, 2).type).toBe("tool_use");
+    expect((at(assistant.content, 2) as ToolUseContentBlock).toolName).toBe("read");
+    expect((at(assistant.content, 2) as ToolUseContentBlock).toolUseId).toBe("call_1");
 
     const toolResult = at(result.messages, 2);
     expect(toolResult.role).toBe("user");

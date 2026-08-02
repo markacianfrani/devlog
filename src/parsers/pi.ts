@@ -131,6 +131,14 @@ function isPiMessageRole(role: string | undefined): role is "user" | "assistant"
   return role === "user" || role === "assistant" || role === "toolResult";
 }
 
+/** pi image blocks carry their media type as `mimeType`; map to the canonical block. */
+function piImageBlock(mimeType: unknown): ImageContentBlock {
+  return {
+    type: "image",
+    mediaType: typeof mimeType === "string" ? mimeType : undefined,
+  };
+}
+
 function parsePiContent(
   content: string | PiRawContentBlock[] | undefined,
   lineContext: ParseLineContext,
@@ -161,10 +169,7 @@ function parsePiContent(
     }
 
     if (block.type === "image") {
-      blocks.push({
-        type: "image",
-        mediaType: block.mimeType,
-      });
+      blocks.push(piImageBlock(block.mimeType));
       continue;
     }
 
@@ -321,6 +326,11 @@ function hasPiUsage(entry: PiGenericEntry): boolean {
   return (entry.message?.usage?.input ?? 0) > 0 || (entry.message?.usage?.output ?? 0) > 0;
 }
 
+/** Escapes a value for safe use inside a synthetic `<pi:...>` attribute. */
+function escapePiAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
 function buildSyntheticPiTextMessage(
   entry: PiGenericEntry,
   sessionId: string | undefined,
@@ -334,7 +344,7 @@ function buildSyntheticPiTextMessage(
 
   const serializedAttributes = Object.entries(attributes)
     .filter((entry): entry is [string, string] => entry[1] !== undefined)
-    .map(([name, value]) => ` ${name}="${value}"`)
+    .map(([name, value]) => ` ${name}="${escapePiAttribute(value)}"`)
     .join("");
   const wrapped = `<pi:${tagName}${serializedAttributes}>${body}</pi:${tagName}>`;
 
@@ -374,11 +384,7 @@ function parsePiCustomMessageContent(
     }
 
     if (type === "image") {
-      const mimeType = block["mimeType"];
-      blocks.push({
-        type: "image",
-        mediaType: typeof mimeType === "string" ? mimeType : undefined,
-      });
+      blocks.push(piImageBlock(block["mimeType"]));
       continue;
     }
 
@@ -419,7 +425,7 @@ function buildCustomMessage(
     // Always emit a provenance marker so customType stays searchable, even for
     // image-only messages that have no text body of their own.
     const marker = customType
-      ? `<pi:custom-message customType="${customType}"/>`
+      ? `<pi:custom-message customType="${escapePiAttribute(customType)}"/>`
       : `<pi:custom-message/>`;
     return createUserMessage(
       {
@@ -470,7 +476,7 @@ function buildPiCustomEnvelope(entry: PiGenericEntry): string {
  * `data` be any JSON value (object, array, string, number, boolean, null) or
  * omitted entirely, so devlog cannot call an extension-owned value malformed.
  */
-function buildPiCustomMessage(
+function buildCustomRecord(
   entry: PiGenericEntry,
   sessionId: string | undefined,
   lineContext: ParseLineContext,
@@ -507,8 +513,10 @@ function buildPiSummaryMessage(
  * pi emits raw shell executions as `bashExecution` messages (command + output +
  * exitCode). They carry no content blocks, so they fall outside the
  * user/assistant/toolResult dispatch — surface them as a synthetic
- * `<pi:bash-execution>` user message so the command and its output stay
- * searchable instead of being dropped.
+ * `<pi:bash-execution>` user message shaped like a shell transcript so the
+ * command and its output stay searchable instead of being dropped. Everything
+ * goes in the body (no attributes), so commands containing quotes can't break
+ * the wrapper.
  */
 function buildBashExecutionMessage(
   entry: PiGenericEntry,
@@ -522,14 +530,49 @@ function buildBashExecutionMessage(
     return undefined;
   }
 
-  // A command may produce no output; fall back to the command text so the
-  // event is still captured (buildSyntheticPiTextMessage drops empty bodies).
-  const body = output.length > 0 ? output : command;
+  const lines: string[] = [];
+  if (command) {
+    lines.push(`$ ${command}`);
+  }
+  if (output) {
+    lines.push(output);
+  }
+  if (typeof message?.exitCode === "number") {
+    lines.push(`[exit: ${message.exitCode}]`);
+  }
 
-  return buildSyntheticPiTextMessage(entry, sessionId, "bash-execution", body, {
-    ...(command.length > 0 && { command }),
-    ...(typeof message?.exitCode === "number" && { exitCode: String(message.exitCode) }),
-  });
+  return buildSyntheticPiTextMessage(entry, sessionId, "bash-execution", lines.join("\n"));
+}
+
+/**
+ * Handles `message` records once the top-level dispatcher has confirmed the
+ * type. bashExecution is a self-contained event (command + output) with no
+ * content blocks, so it lives outside the user/assistant/toolResult union.
+ * Any other unrecognized role is a real record we'd otherwise drop silently —
+ * warn so novel pi roles surface instead of vanishing.
+ */
+function buildPiMessageEntry(
+  entry: PiMessageEntry,
+  state: SessionState,
+  lineContext: ParseLineContext,
+): { malformed: boolean; message?: CleanMessage } {
+  if (entry.message?.role === "bashExecution") {
+    return { malformed: false, message: buildBashExecutionMessage(entry, state.sessionId) };
+  }
+
+  if (!isPiMessageRole(entry.message?.role)) {
+    lineContext.unknownType(entry.message?.role ?? "(missing)", "message role");
+    return { malformed: false };
+  }
+
+  const parsedContent = parsePiMessageContent(entry, entry.message.role, lineContext);
+  updateStateFromEntry(state, entry, parsedContent);
+
+  if (parsedContent.length === 0 && !hasPiUsage(entry)) {
+    return { malformed: false };
+  }
+
+  return { malformed: false, message: buildPiMessage(entry, state.sessionId, parsedContent) };
 }
 
 function parsePiEntry(
@@ -563,7 +606,7 @@ function parsePiEntry(
   if (entry.type === "custom") {
     return {
       malformed: false,
-      message: buildPiCustomMessage(entry, state.sessionId, lineContext),
+      message: buildCustomRecord(entry, state.sessionId, lineContext),
     };
   }
 
@@ -582,30 +625,7 @@ function parsePiEntry(
     return { malformed: false };
   }
 
-  // bashExecution is a self-contained event (command + output) with no content
-  // blocks, so it lives outside the user/assistant/toolResult union.
-  if (entry.message?.role === "bashExecution") {
-    return { malformed: false, message: buildBashExecutionMessage(entry, state.sessionId) };
-  }
-
-  // Any other unrecognized role is a real record we'd otherwise drop silently —
-  // warn so novel pi roles surface instead of vanishing.
-  if (!isPiMessageRole(entry.message?.role)) {
-    lineContext.unknownType(entry.message?.role ?? "(missing)", "record");
-    return { malformed: false };
-  }
-
-  const parsedContent = parsePiMessageContent(entry, entry.message.role, lineContext);
-  updateStateFromEntry(state, entry, parsedContent);
-
-  if (parsedContent.length === 0 && !hasPiUsage(entry)) {
-    return { malformed: false };
-  }
-
-  return {
-    malformed: false,
-    message: buildPiMessage(entry, state.sessionId, parsedContent),
-  };
+  return buildPiMessageEntry(entry, state, lineContext);
 }
 
 export async function parsePiSession(jsonlPath: string, project: string): Promise<ParseOutcome> {

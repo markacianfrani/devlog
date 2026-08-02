@@ -867,9 +867,9 @@ describe("Pi parser", () => {
     expect(bash.id).toBe("b1");
 
     const text = (bash.content[0] as TextContentBlock).text;
-    expect(text).toContain("<pi:bash-execution");
-    expect(text).toContain('command="ls fart-dir"');
-    expect(text).toContain('exitCode="0"');
+    expect(text).toContain("<pi:bash-execution>");
+    expect(text).toContain("$ ls fart-dir");
+    expect(text).toContain("[exit: 0]");
     expect(text).toContain("fart_a.txt");
     expect(text).toContain("</pi:bash-execution>");
   });
@@ -881,13 +881,13 @@ describe("Pi parser", () => {
 
     expect(outcome.warnings).toEqual([
       expect.objectContaining({
-        kind: "unknown-record-type",
+        kind: "unknown-message-role",
         parserName: "pi-parser",
-        message: '[pi-parser] Unknown record type: "fartEvent"',
+        message: '[pi-parser] Unknown message role: "fartEvent"',
         filePath,
         lineNumber: 3,
         count: 1,
-        context: "record",
+        context: "message role",
         type: "fartEvent",
       }),
     ]);

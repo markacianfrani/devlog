@@ -140,13 +140,14 @@ export interface ArtifactLink {
   timestamp: string;
 }
 
-export type UnknownWarningContext = "record" | "content block";
+export type UnknownWarningContext = "record" | "content block" | "message role";
 
 export type ParseWarningKind =
   | "malformed-lines"
   | "missing-field"
   | "unknown-content-block-type"
-  | "unknown-record-type";
+  | "unknown-record-type"
+  | "unknown-message-role";
 
 export interface ParseWarning {
   kind: ParseWarningKind;

@@ -1,4 +1,3 @@
-import { getPiExtensionRenderer } from "./pi-extensions.ts";
 import {
   getFirstTextPreview,
   isObjectRecord,
@@ -49,6 +48,11 @@ interface PiAgentMessage {
   usage?: PiUsage;
   toolCallId?: string;
   toolName?: string;
+  // bashExecution messages carry the command + output at the message level
+  // instead of as content blocks.
+  command?: string;
+  output?: string;
+  exitCode?: number;
 }
 
 interface PiMessageEntry {
@@ -127,6 +131,14 @@ function isPiMessageRole(role: string | undefined): role is "user" | "assistant"
   return role === "user" || role === "assistant" || role === "toolResult";
 }
 
+/** pi image blocks carry their media type as `mimeType`; map to the canonical block. */
+function piImageBlock(mimeType: unknown): ImageContentBlock {
+  return {
+    type: "image",
+    mediaType: typeof mimeType === "string" ? mimeType : undefined,
+  };
+}
+
 function parsePiContent(
   content: string | PiRawContentBlock[] | undefined,
   lineContext: ParseLineContext,
@@ -141,10 +153,6 @@ function parsePiContent(
 
   const blocks: ContentBlock[] = [];
   for (const block of content) {
-    if (block.type === "thinking") {
-      continue;
-    }
-
     if (block.type === "toolCall") {
       if (!block.name) {
         lineContext.missingField("toolCall block missing name");
@@ -161,10 +169,7 @@ function parsePiContent(
     }
 
     if (block.type === "image") {
-      blocks.push({
-        type: "image",
-        mediaType: block.mimeType,
-      });
+      blocks.push(piImageBlock(block.mimeType));
       continue;
     }
 
@@ -321,6 +326,11 @@ function hasPiUsage(entry: PiGenericEntry): boolean {
   return (entry.message?.usage?.input ?? 0) > 0 || (entry.message?.usage?.output ?? 0) > 0;
 }
 
+/** Escapes a value for safe use inside a synthetic `<pi:...>` attribute. */
+function escapePiAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
 function buildSyntheticPiTextMessage(
   entry: PiGenericEntry,
   sessionId: string | undefined,
@@ -334,7 +344,7 @@ function buildSyntheticPiTextMessage(
 
   const serializedAttributes = Object.entries(attributes)
     .filter((entry): entry is [string, string] => entry[1] !== undefined)
-    .map(([name, value]) => ` ${name}="${value}"`)
+    .map(([name, value]) => ` ${name}="${escapePiAttribute(value)}"`)
     .join("");
   const wrapped = `<pi:${tagName}${serializedAttributes}>${body}</pi:${tagName}>`;
 
@@ -349,56 +359,133 @@ function buildSyntheticPiTextMessage(
   );
 }
 
-function buildCustomMessage(
-  entry: PiGenericEntry,
-  sessionId: string | undefined,
-): CleanMessage | undefined {
-  const body = typeof entry.content === "string" ? entry.content : "";
-  if (!body && !entry.customType) {
-    return undefined;
+function parsePiCustomMessageContent(
+  content: unknown,
+  lineContext: ParseLineContext,
+): UserContentBlock[] {
+  if (!Array.isArray(content)) {
+    return [];
   }
 
-  return buildSyntheticPiTextMessage(entry, sessionId, "custom-message", body, {
-    customType: entry.customType ?? "unknown",
-  });
+  const blocks: UserContentBlock[] = [];
+  for (const block of content) {
+    if (!isObjectRecord(block)) {
+      lineContext.missingField("custom_message content block must be an object");
+      continue;
+    }
+
+    const type = typeof block["type"] === "string" ? block["type"] : "(missing)";
+    if (type === "text") {
+      const text = typeof block["text"] === "string" ? block["text"] : "";
+      if (text.length > 0) {
+        blocks.push({ type: "text", text });
+      }
+      continue;
+    }
+
+    if (type === "image") {
+      blocks.push(piImageBlock(block["mimeType"]));
+      continue;
+    }
+
+    lineContext.unknownType(type, "content block");
+  }
+
+  return blocks;
 }
 
 /**
- * `custom` is pi's generic extension envelope. We route by `customType` through
- * the extension registry. An unrecognized extension still warns, but named by
- * the extension itself rather than the opaque `"custom"`.
+ * `custom_message` is pi's extension-owned message record. Its public contract
+ * is a `customType` plus `content` that is either a string or an array of
+ * text/image blocks. Devlog normalizes only that stable content surface; it
+ * never inspects `customType` or the extension-owned `details` field.
+ *
+ * String content keeps the existing provenance wrapper. Array content is
+ * parsed into real text/image blocks (so images keep their media type and text
+ * stays searchable), with a deterministic provenance marker prepended so the
+ * custom type stays searchable even for image-only messages. Unsupported block
+ * types warn through the normal content-block warning path.
  */
-function buildCustomExtensionMessage(
+function buildCustomMessage(
   entry: PiGenericEntry,
   sessionId: string | undefined,
   lineContext: ParseLineContext,
 ): CleanMessage | undefined {
-  const renderer =
-    typeof entry.customType === "string" ? getPiExtensionRenderer(entry.customType) : undefined;
-  if (!renderer) {
-    lineContext.unknownType(entry.customType ?? "custom", "record");
-    return undefined;
+  const customType = typeof entry.customType === "string" ? entry.customType : undefined;
+  const content = entry.content;
+
+  if (typeof content === "string") {
+    return buildSyntheticPiTextMessage(entry, sessionId, "custom-message", content, {
+      customType: customType ?? "unknown",
+    });
   }
 
-  // A recognized extension whose payload isn't even an object is malformed, not
-  // empty — surface it instead of dropping it silently the way a null goal is.
-  if (!isObjectRecord(entry.data)) {
-    lineContext.missingField(`Malformed payload for custom extension "${entry.customType}"`);
-    return undefined;
+  if (Array.isArray(content)) {
+    const blocks = parsePiCustomMessageContent(content, lineContext);
+    // Always emit a provenance marker so customType stays searchable, even for
+    // image-only messages that have no text body of their own.
+    const marker = customType
+      ? `<pi:custom-message customType="${escapePiAttribute(customType)}"/>`
+      : `<pi:custom-message/>`;
+    return createUserMessage(
+      {
+        id: entry.id,
+        sessionId,
+        timestamp: entry.timestamp,
+        ...(entry.parentId && { parentId: entry.parentId }),
+      },
+      [{ type: "text", text: marker }, ...blocks],
+    );
   }
 
-  const rendered = renderer(entry.data);
-  if (!rendered) {
-    return undefined;
+  return undefined;
+}
+
+/**
+ * Serializes a pi `custom` record's stable envelope into deterministic JSON.
+ * Only stable envelope fields are read: `customType` (when it is a string) and
+ * `data` (when the field is present, including an explicit `null`). The value
+ * of `data` stays opaque JSON and is never inspected field-by-field.
+ *
+ * Carrying the custom type inside the JSON body (rather than as an XML-like
+ * attribute) keeps the output deterministic, avoids attribute-escaping
+ * problems for arbitrary custom type names, and preserves the distinction
+ * between an omitted `data` field and an explicitly present `null`.
+ */
+function buildPiCustomEnvelope(entry: PiGenericEntry): string {
+  const envelope: Record<string, unknown> = {};
+  if (typeof entry.customType === "string") {
+    envelope["customType"] = entry.customType;
+  }
+  if ("data" in entry) {
+    envelope["data"] = entry.data;
+  }
+  return JSON.stringify(envelope);
+}
+
+/**
+ * `custom` is pi's generic extension envelope: a `customType` plus an
+ * extension-owned `data` payload. Devlog depends only on the public envelope,
+ * never on any extension's private payload schema, so every well-formed custom
+ * record is surfaced verbatim inside a `<pi:custom>` block.
+ *
+ * A missing or non-string `customType` is a stable-envelope problem (not an
+ * extension payload problem), so it warns through the normal missing-field
+ * path while the record is still surfaced using whatever envelope fields were
+ * present. The payload itself is never warned about: pi's public contract lets
+ * `data` be any JSON value (object, array, string, number, boolean, null) or
+ * omitted entirely, so devlog cannot call an extension-owned value malformed.
+ */
+function buildCustomRecord(
+  entry: PiGenericEntry,
+  sessionId: string | undefined,
+  lineContext: ParseLineContext,
+): CleanMessage | undefined {
+  if (typeof entry.customType !== "string") {
+    lineContext.missingField("custom record missing a valid customType field");
   }
 
-  return buildSyntheticPiTextMessage(
-    entry,
-    sessionId,
-    rendered.tagName,
-    rendered.body,
-    rendered.attributes,
-  );
+  return buildSyntheticPiTextMessage(entry, sessionId, "custom", buildPiCustomEnvelope(entry));
 }
 
 function buildPiSummaryMessage(
@@ -420,6 +507,72 @@ function buildPiSummaryMessage(
   }
 
   return undefined;
+}
+
+/**
+ * pi emits raw shell executions as `bashExecution` messages (command + output +
+ * exitCode). They carry no content blocks, so they fall outside the
+ * user/assistant/toolResult dispatch — surface them as a synthetic
+ * `<pi:bash-execution>` user message shaped like a shell transcript so the
+ * command and its output stay searchable instead of being dropped. Everything
+ * goes in the body (no attributes), so commands containing quotes can't break
+ * the wrapper.
+ */
+function buildBashExecutionMessage(
+  entry: PiGenericEntry,
+  sessionId: string | undefined,
+): CleanMessage | undefined {
+  const message = entry.message;
+  const command = typeof message?.command === "string" ? message.command : "";
+  const output = typeof message?.output === "string" ? message.output : "";
+
+  if (!command && !output) {
+    return undefined;
+  }
+
+  const lines: string[] = [];
+  if (command) {
+    lines.push(`$ ${command}`);
+  }
+  if (output) {
+    lines.push(output);
+  }
+  if (typeof message?.exitCode === "number") {
+    lines.push(`[exit: ${message.exitCode}]`);
+  }
+
+  return buildSyntheticPiTextMessage(entry, sessionId, "bash-execution", lines.join("\n"));
+}
+
+/**
+ * Handles `message` records once the top-level dispatcher has confirmed the
+ * type. bashExecution is a self-contained event (command + output) with no
+ * content blocks, so it lives outside the user/assistant/toolResult union.
+ * Any other unrecognized role is a real record we'd otherwise drop silently —
+ * warn so novel pi roles surface instead of vanishing.
+ */
+function buildPiMessageEntry(
+  entry: PiMessageEntry,
+  state: SessionState,
+  lineContext: ParseLineContext,
+): { malformed: boolean; message?: CleanMessage } {
+  if (entry.message?.role === "bashExecution") {
+    return { malformed: false, message: buildBashExecutionMessage(entry, state.sessionId) };
+  }
+
+  if (!isPiMessageRole(entry.message?.role)) {
+    lineContext.unknownType(entry.message?.role ?? "(missing)", "message role");
+    return { malformed: false };
+  }
+
+  const parsedContent = parsePiMessageContent(entry, entry.message.role, lineContext);
+  updateStateFromEntry(state, entry, parsedContent);
+
+  if (parsedContent.length === 0 && !hasPiUsage(entry)) {
+    return { malformed: false };
+  }
+
+  return { malformed: false, message: buildPiMessage(entry, state.sessionId, parsedContent) };
 }
 
 function parsePiEntry(
@@ -447,13 +600,13 @@ function parsePiEntry(
   }
 
   if (entry.type === "custom_message") {
-    return { malformed: false, message: buildCustomMessage(entry, state.sessionId) };
+    return { malformed: false, message: buildCustomMessage(entry, state.sessionId, lineContext) };
   }
 
   if (entry.type === "custom") {
     return {
       malformed: false,
-      message: buildCustomExtensionMessage(entry, state.sessionId, lineContext),
+      message: buildCustomRecord(entry, state.sessionId, lineContext),
     };
   }
 
@@ -465,24 +618,14 @@ function parsePiEntry(
     return { malformed: false };
   }
 
-  if (!isPiMessageEntry(entry) || !isPiMessageRole(entry.message?.role)) {
+  if (!isPiMessageEntry(entry)) {
     if (entry.type && !KNOWN_TYPES.has(entry.type)) {
       lineContext.unknownType(entry.type, "record");
     }
     return { malformed: false };
   }
 
-  const parsedContent = parsePiMessageContent(entry, entry.message.role, lineContext);
-  updateStateFromEntry(state, entry, parsedContent);
-
-  if (parsedContent.length === 0 && !hasPiUsage(entry)) {
-    return { malformed: false };
-  }
-
-  return {
-    malformed: false,
-    message: buildPiMessage(entry, state.sessionId, parsedContent),
-  };
+  return buildPiMessageEntry(entry, state, lineContext);
 }
 
 export async function parsePiSession(jsonlPath: string, project: string): Promise<ParseOutcome> {

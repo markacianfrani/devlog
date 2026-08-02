@@ -1,5 +1,9 @@
-{"type":"session","version":3,"id":"pi-custom-1","timestamp":"2026-03-15T20:09:38.000Z","cwd":"/home/user/project"}
-{"type":"message","id":"u0000001","parentId":null,"timestamp":"2026-03-15T20:10:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Spawn a subagent"}]}}
-{"type":"custom_message","id":"c0000001","parentId":"u0000001","timestamp":"2026-03-15T20:10:05.000Z","customType":"subagent-slash-result","content":"Subagent finished: here is the synthesized finding.","display":"Subagent result"}
-{"type":"thinking_level_change","id":"t0000001","parentId":"c0000001","timestamp":"2026-03-15T20:10:06.000Z","thinkingLevel":"high"}
-{"type":"message","id":"a0000001","parentId":"t0000001","timestamp":"2026-03-15T20:10:10.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Synthesis complete."}],"model":"gpt-5.4"}}
+{"type":"session","version":3,"id":"pi-custom-msg","timestamp":"2026-03-15T20:09:38.000Z","cwd":"/home/user/project"}
+{"type":"message","id":"u1","parentId":null,"timestamp":"2026-03-15T20:10:00.000Z","message":{"role":"user","content":[{"type":"text","text":"emit some custom messages"}]}}
+{"type":"custom_message","id":"cm1","parentId":"u1","timestamp":"2026-03-15T20:10:01.000Z","customType":"fart-string","content":"silent but deadly string fart"}
+{"type":"custom_message","id":"cm2","parentId":"u1","timestamp":"2026-03-15T20:10:02.000Z","customType":"fart-text-array","content":[{"type":"text","text":"first fart"},{"type":"text","text":"second fart"}]}
+{"type":"custom_message","id":"cm3","parentId":"u1","timestamp":"2026-03-15T20:10:03.000Z","customType":"fart-image-array","content":[{"type":"image","mimeType":"image/png"}]}
+{"type":"custom_message","id":"cm4","parentId":"u1","timestamp":"2026-03-15T20:10:04.000Z","customType":"fart-mixed","content":[{"type":"text","text":"mixed fart"},{"type":"image","mimeType":"image/jpeg"}]}
+{"type":"custom_message","id":"cm5","parentId":"u1","timestamp":"2026-03-15T20:10:05.000Z","customType":"fart-unsupported","content":[{"type":"text","text":"supported fart"},{"type":"fart-unknown-block","payload":"toot"}]}
+{"type":"thinking_level_change","id":"t1","parentId":"cm5","timestamp":"2026-03-15T20:10:06.000Z","thinkingLevel":"high"}
+{"type":"message","id":"a1","parentId":"t1","timestamp":"2026-03-15T20:10:07.000Z","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"model":"gpt-5.4"}}

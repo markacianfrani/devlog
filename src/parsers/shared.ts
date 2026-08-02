@@ -16,10 +16,12 @@ import type {
 } from "./types.ts";
 import { CONTENT_BLOCK_TYPES } from "./types.ts";
 
-const UNKNOWN_KIND_BY_CONTEXT: Record<UnknownWarningContext, ParseWarningKind> = {
-  record: "unknown-record-type",
-  "content block": "unknown-content-block-type",
-};
+const UNKNOWN_TYPE_INFO: Record<UnknownWarningContext, { kind: ParseWarningKind; label: string }> =
+  {
+    record: { kind: "unknown-record-type", label: "record type" },
+    "content block": { kind: "unknown-content-block-type", label: "content block type" },
+    "message role": { kind: "unknown-message-role", label: "message role" },
+  };
 
 interface WarningDraft {
   kind: ParseWarningKind;
@@ -88,10 +90,10 @@ export class ParseWarningCollector {
   }
 
   unknownType(type: string, context: UnknownWarningContext, lineNumber?: number): void {
-    const kind = UNKNOWN_KIND_BY_CONTEXT[context];
+    const info = UNKNOWN_TYPE_INFO[context];
     this.add({
-      kind,
-      message: `[${this.parserName}] Unknown ${context} type: "${type}"`,
+      kind: info.kind,
+      message: `[${this.parserName}] Unknown ${info.label}: "${type}"`,
       lineNumber,
       context,
       type,

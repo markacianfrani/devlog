@@ -84,7 +84,7 @@ export interface ArtifactLinkRow {
   artifact_url: string;
   timestamp: string | null;
 }
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;

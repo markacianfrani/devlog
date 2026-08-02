@@ -75,6 +75,10 @@ If you need the archive itself to be clean, scrub it out-of-band (e.g., wipe a s
 | opencode    | `~/.local/share/opencode/opencode.db` | SQLite |
 | pi          | `~/.pi/agent/sessions/`               | JSONL  |
 
+### pi extension records
+
+pi writes generic extension records (`custom` and `custom_message`) alongside its conversational messages. Devlog indexes these from their public envelope only — it never interprets any third-party extension's private payload schema. A `custom` entry's `data` is serialized as opaque JSON inside a `<pi:custom>` block, so nested values stay searchable but are displayed verbatim rather than reformatted. Raw archived JSONL files are never rewritten by indexing; upgrading across an index-version bump rebuilds the local SQLite cache on the next `devlog index`, making previously dropped extension state searchable again.
+
 ## File layout
 
 Follows the [XDG Base Directory](https://specifications.freedesktop.org/basedir-spec/latest/) spec:

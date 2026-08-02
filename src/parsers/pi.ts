@@ -1,4 +1,3 @@
-import { getPiExtensionRenderer } from "./pi-extensions.ts";
 import {
   getFirstTextPreview,
   isObjectRecord,
@@ -350,61 +349,137 @@ function buildSyntheticPiTextMessage(
   );
 }
 
-function buildCustomMessage(
-  entry: PiGenericEntry,
-  sessionId: string | undefined,
-): CleanMessage | undefined {
-  const body = typeof entry.content === "string" ? entry.content : "";
-  if (!body && !entry.customType) {
-    return undefined;
+function parsePiCustomMessageContent(
+  content: unknown,
+  lineContext: ParseLineContext,
+): UserContentBlock[] {
+  if (!Array.isArray(content)) {
+    return [];
   }
 
-  return buildSyntheticPiTextMessage(entry, sessionId, "custom-message", body, {
-    customType: entry.customType ?? "unknown",
-  });
+  const blocks: UserContentBlock[] = [];
+  for (const block of content) {
+    if (!isObjectRecord(block)) {
+      lineContext.missingField("custom_message content block must be an object");
+      continue;
+    }
+
+    const type = typeof block["type"] === "string" ? block["type"] : "(missing)";
+    if (type === "text") {
+      const text = typeof block["text"] === "string" ? block["text"] : "";
+      if (text.length > 0) {
+        blocks.push({ type: "text", text });
+      }
+      continue;
+    }
+
+    if (type === "image") {
+      const mimeType = block["mimeType"];
+      blocks.push({
+        type: "image",
+        mediaType: typeof mimeType === "string" ? mimeType : undefined,
+      });
+      continue;
+    }
+
+    lineContext.unknownType(type, "content block");
+  }
+
+  return blocks;
 }
 
 /**
- * `custom` is pi's generic extension envelope, stamped with a `customType` and
- * a structured `data` payload owned by the extension (pi or third-party). Those
- * payloads vary and change independently of devlog, so we never drop a custom
- * record or overfit to one extension's schema:
+ * `custom_message` is pi's extension-owned message record. Its public contract
+ * is a `customType` plus `content` that is either a string or an array of
+ * text/image blocks. Devlog normalizes only that stable content surface; it
+ * never inspects `customType` or the extension-owned `details` field.
  *
- *   - if a bespoke renderer is registered and returns a render, use it;
- *   - otherwise serialize the payload verbatim as a generic `<pi:custom>` block.
- *
- * A non-object payload breaks the envelope contract, so that case still warns
- * rather than guessing at arbitrary string values.
+ * String content keeps the existing provenance wrapper. Array content is
+ * parsed into real text/image blocks (so images keep their media type and text
+ * stays searchable), with a deterministic provenance marker prepended so the
+ * custom type stays searchable even for image-only messages. Unsupported block
+ * types warn through the normal content-block warning path.
  */
-function buildCustomExtensionMessage(
+function buildCustomMessage(
   entry: PiGenericEntry,
   sessionId: string | undefined,
   lineContext: ParseLineContext,
 ): CleanMessage | undefined {
-  const customType = typeof entry.customType === "string" ? entry.customType : "custom";
+  const customType = typeof entry.customType === "string" ? entry.customType : undefined;
+  const content = entry.content;
 
-  if (!isObjectRecord(entry.data)) {
-    lineContext.missingField(`Malformed payload for custom extension "${customType}"`);
-    return undefined;
+  if (typeof content === "string") {
+    return buildSyntheticPiTextMessage(entry, sessionId, "custom-message", content, {
+      customType: customType ?? "unknown",
+    });
   }
 
-  const renderer = getPiExtensionRenderer(customType);
-  const rendered = renderer ? renderer(entry.data) : undefined;
-  if (rendered) {
-    return buildSyntheticPiTextMessage(
-      entry,
-      sessionId,
-      rendered.tagName,
-      rendered.body,
-      rendered.attributes,
+  if (Array.isArray(content)) {
+    const blocks = parsePiCustomMessageContent(content, lineContext);
+    // Always emit a provenance marker so customType stays searchable, even for
+    // image-only messages that have no text body of their own.
+    const marker = customType
+      ? `<pi:custom-message customType="${customType}"/>`
+      : `<pi:custom-message/>`;
+    return createUserMessage(
+      {
+        id: entry.id,
+        sessionId,
+        timestamp: entry.timestamp,
+        ...(entry.parentId && { parentId: entry.parentId }),
+      },
+      [{ type: "text", text: marker }, ...blocks],
     );
   }
 
-  // Generic fallback: capture the payload verbatim so unknown or schema-changed
-  // extensions stay searchable instead of vanishing.
-  return buildSyntheticPiTextMessage(entry, sessionId, "custom", JSON.stringify(entry.data), {
-    customType,
-  });
+  return undefined;
+}
+
+/**
+ * Serializes a pi `custom` record's stable envelope into deterministic JSON.
+ * Only stable envelope fields are read: `customType` (when it is a string) and
+ * `data` (when the field is present, including an explicit `null`). The value
+ * of `data` stays opaque JSON and is never inspected field-by-field.
+ *
+ * Carrying the custom type inside the JSON body (rather than as an XML-like
+ * attribute) keeps the output deterministic, avoids attribute-escaping
+ * problems for arbitrary custom type names, and preserves the distinction
+ * between an omitted `data` field and an explicitly present `null`.
+ */
+function buildPiCustomEnvelope(entry: PiGenericEntry): string {
+  const envelope: Record<string, unknown> = {};
+  if (typeof entry.customType === "string") {
+    envelope["customType"] = entry.customType;
+  }
+  if ("data" in entry) {
+    envelope["data"] = entry.data;
+  }
+  return JSON.stringify(envelope);
+}
+
+/**
+ * `custom` is pi's generic extension envelope: a `customType` plus an
+ * extension-owned `data` payload. Devlog depends only on the public envelope,
+ * never on any extension's private payload schema, so every well-formed custom
+ * record is surfaced verbatim inside a `<pi:custom>` block.
+ *
+ * A missing or non-string `customType` is a stable-envelope problem (not an
+ * extension payload problem), so it warns through the normal missing-field
+ * path while the record is still surfaced using whatever envelope fields were
+ * present. The payload itself is never warned about: pi's public contract lets
+ * `data` be any JSON value (object, array, string, number, boolean, null) or
+ * omitted entirely, so devlog cannot call an extension-owned value malformed.
+ */
+function buildPiCustomMessage(
+  entry: PiGenericEntry,
+  sessionId: string | undefined,
+  lineContext: ParseLineContext,
+): CleanMessage | undefined {
+  if (typeof entry.customType !== "string") {
+    lineContext.missingField("custom record missing a valid customType field");
+  }
+
+  return buildSyntheticPiTextMessage(entry, sessionId, "custom", buildPiCustomEnvelope(entry));
 }
 
 function buildPiSummaryMessage(
@@ -482,13 +557,13 @@ function parsePiEntry(
   }
 
   if (entry.type === "custom_message") {
-    return { malformed: false, message: buildCustomMessage(entry, state.sessionId) };
+    return { malformed: false, message: buildCustomMessage(entry, state.sessionId, lineContext) };
   }
 
   if (entry.type === "custom") {
     return {
       malformed: false,
-      message: buildCustomExtensionMessage(entry, state.sessionId, lineContext),
+      message: buildPiCustomMessage(entry, state.sessionId, lineContext),
     };
   }
 

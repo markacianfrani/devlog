@@ -1,10 +1,13 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { closeDb, getDb } from "../db.ts";
 import { indexAll, indexSession } from "../indexer.ts";
+import type { ParseWarning } from "../parsers/types.ts";
 import type { IndexRedactionContext } from "../redaction.ts";
 import { at } from "./archive-fixtures.ts";
 
@@ -540,5 +543,132 @@ describe("indexer", () => {
 
     expect(ftsResults.length).toBeGreaterThan(0);
     expect(at(ftsResults, 0).session_id).toBe("test-session-1");
+  });
+
+  test("indexes pi custom entries generically through redaction into SQLite/FTS", async () => {
+    const db = getDb(dbPath);
+    const fixturePath = path.join(FIXTURES_DIR, "pi-custom-entries.jsonl");
+    const beforeChecksum = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(fixturePath))
+      .digest("hex");
+
+    const warnings: ParseWarning[] = [];
+    await indexSession(fixturePath, "pi", "test-project", db, undefined, (w) => warnings.push(w));
+
+    // Raw archive content is never mutated by indexing.
+    const afterChecksum = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(fixturePath))
+      .digest("hex");
+    expect(afterChecksum).toBe(beforeChecksum);
+
+    // Every custom entry (10) plus the surrounding user + assistant messages
+    // (2) become normalized message rows.
+    const messageCount = db
+      .query<{ count: number }, []>("SELECT COUNT(*) as count FROM messages")
+      .get();
+    expect(messageCount?.count).toBe(12);
+
+    // Custom entries become user-role text content blocks carrying the generic
+    // envelope JSON, with payloads preserved verbatim (no field interpretation).
+    const customTexts = db
+      .query<{ text: string }, []>(
+        "SELECT text FROM content_blocks WHERE type='text' AND text LIKE '<pi:custom>%' ORDER BY id",
+      )
+      .all()
+      .map((row) => row.text);
+    expect(customTexts).toHaveLength(10);
+    expect(
+      customTexts.some((t) => t.includes('"customType":"fart-array"') && t.includes('"blorp"')),
+    ).toBe(true);
+    expect(customTexts.some((t) => t.includes('"data":42'))).toBe(true);
+    expect(customTexts.some((t) => t.includes('"data":true'))).toBe(true);
+    expect(customTexts.some((t) => t.includes('"data":"silent-but-deadly"'))).toBe(true);
+
+    // Opaque JSON appears in messages_fts, and a value nested inside arbitrary
+    // custom data finds the session.
+    const ftsHits = db
+      .query<{ session_id: string }, [string]>(
+        "SELECT session_id FROM messages_fts WHERE messages_fts MATCH ?",
+      )
+      .all("blorp")
+      .map((row) => row.session_id);
+    expect(ftsHits).toContain("pi-custom-entries");
+
+    // All payload forms reach the database; the only warnings are the
+    // customType-envelope ones (not payload-shape warnings).
+    const payloadWarnings = warnings.filter((w) => !w.message.includes("customType"));
+    expect(payloadWarnings).toEqual([]);
+    expect(
+      warnings.every((w) => w.kind === "missing-field" && w.message.includes("customType")),
+    ).toBe(true);
+
+    // Secret-shaped values inside custom data pass through index redaction
+    // before being written to content blocks / FTS.
+    const persistedText = db
+      .query<{ text: string }, []>("SELECT text FROM content_blocks WHERE type='text'")
+      .all()
+      .map((row) => row.text)
+      .join("\n");
+    expect(persistedText).toContain("[REDACTED:github-token]");
+    expect(persistedText).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
+  });
+
+  test("schema version bump drops and rebuilds the cache, reindexing without touching archives", async () => {
+    const dbPath = path.join(tempDir, "index.db");
+    const fixturePath = path.join(FIXTURES_DIR, "pi-custom-entries.jsonl");
+    const archiveCopy = path.join(tempDir, "session.jsonl");
+    fs.copyFileSync(fixturePath, archiveCopy);
+    const beforeChecksum = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(archiveCopy))
+      .digest("hex");
+
+    // First index under the current schema.
+    let db = getDb(dbPath);
+    await indexSession(archiveCopy, "pi", "test-project", db);
+    const firstCount = db
+      .query<{ count: number }, [string]>(
+        "SELECT COUNT(*) as count FROM messages WHERE file_path = ?",
+      )
+      .get(archiveCopy);
+    expect(firstCount?.count).toBeGreaterThan(0);
+    expect(
+      db.query<{ version: number }, []>("SELECT version FROM schema_version").get()?.version,
+    ).toBe(13);
+    closeDb();
+
+    // Simulate a stale cache pinned to the previous index version.
+    const stale = new Database(dbPath);
+    stale.exec("PRAGMA foreign_keys = ON");
+    stale.run("UPDATE schema_version SET version = 12");
+    stale.close();
+
+    // Reopen: the version mismatch drops and recreates the cache tables through
+    // the existing rebuild path.
+    db = getDb(dbPath);
+    expect(
+      db.query<{ version: number }, []>("SELECT version FROM schema_version").get()?.version,
+    ).toBe(13);
+    expect(
+      db.query<{ count: number }, []>("SELECT COUNT(*) as count FROM messages").get()?.count,
+    ).toBe(0);
+
+    // The next index run repopulates the previously dropped custom state.
+    await indexSession(archiveCopy, "pi", "test-project", db);
+    const reindexedCount = db
+      .query<{ count: number }, [string]>(
+        "SELECT COUNT(*) as count FROM messages WHERE file_path = ?",
+      )
+      .get(archiveCopy);
+    expect(reindexedCount?.count).toBe(firstCount?.count);
+
+    // Raw archive content is left untouched.
+    const afterChecksum = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(archiveCopy))
+      .digest("hex");
+    expect(afterChecksum).toBe(beforeChecksum);
   });
 });

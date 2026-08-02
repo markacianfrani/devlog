@@ -1,0 +1,13 @@
+{"type":"session","version":3,"id":"pi-custom-entries","timestamp":"2026-03-15T20:09:38.000Z","cwd":"/home/user/fart-project"}
+{"type":"message","id":"u1","parentId":null,"timestamp":"2026-03-15T20:10:00.000Z","message":{"role":"user","content":[{"type":"text","text":"log some custom fart events"}]}}
+{"type":"custom","customType":"fart-vault","id":"c-vault","parentId":"u1","timestamp":"2026-03-15T20:10:01.000Z","data":{"credential":"ghp_abcdefghijklmnopqrstuvwxyz123456","note":"vault fart"}}
+{"type":"custom","customType":"fart-array","id":"c-array","parentId":"u1","timestamp":"2026-03-15T20:10:02.000Z","data":["toot","poot","blorp"]}
+{"type":"custom","customType":"fart-string","id":"c-string","parentId":"u1","timestamp":"2026-03-15T20:10:03.000Z","data":"silent-but-deadly"}
+{"type":"custom","customType":"fart-number","id":"c-number","parentId":"u1","timestamp":"2026-03-15T20:10:04.000Z","data":42}
+{"type":"custom","customType":"fart-boolean","id":"c-boolean","parentId":"u1","timestamp":"2026-03-15T20:10:05.000Z","data":true}
+{"type":"custom","customType":"fart-null","id":"c-null","parentId":"u1","timestamp":"2026-03-15T20:10:06.000Z","data":null}
+{"type":"custom","customType":"fart-omitted","id":"c-omitted","parentId":"u1","timestamp":"2026-03-15T20:10:07.000Z"}
+{"type":"custom","customType":"fart-unknown","id":"c-unknown","parentId":"u1","timestamp":"2026-03-15T20:10:08.000Z","data":{"whatever":true}}
+{"type":"custom","id":"c-missing-type","parentId":"u1","timestamp":"2026-03-15T20:10:09.000Z","data":{"missingType":true}}
+{"type":"custom","customType":123,"id":"c-bad-type","parentId":"u1","timestamp":"2026-03-15T20:10:10.000Z","data":{"invalidType":true}}
+{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-03-15T20:10:11.000Z","message":{"role":"assistant","content":[{"type":"text","text":"all farts logged"}],"model":"gpt-5.4"}}

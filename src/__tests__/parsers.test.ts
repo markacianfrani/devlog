@@ -6,6 +6,7 @@ import { parseOpenCodeSession } from "../parsers/opencode.ts";
 import { parsePiSession } from "../parsers/pi.ts";
 import { parseContentBlock, ParseWarningCollector } from "../parsers/shared.ts";
 import type {
+  ContentBlock,
   ParseOutcome,
   ParseResult,
   ParseWarning,
@@ -549,9 +550,7 @@ describe("Pi parser", () => {
     // redaction both support them, so reasoning stays searchable.
     expect(assistant.content).toHaveLength(3);
     expect(at(assistant.content, 0).type).toBe("thinking");
-    expect((at(assistant.content, 0) as ThinkingContentBlock).thinking).toBe(
-      "private reasoning",
-    );
+    expect((at(assistant.content, 0) as ThinkingContentBlock).thinking).toBe("private reasoning");
     expect(at(assistant.content, 1).type).toBe("text");
     expect(at(assistant.content, 2).type).toBe("tool_use");
     expect((at(assistant.content, 2) as ToolUseContentBlock).toolName).toBe("read");
@@ -565,132 +564,141 @@ describe("Pi parser", () => {
     expect((at(toolResult.content, 0) as ToolResultContentBlock).toolUseId).toBe("call_1");
   });
 
-  test("surfaces pi custom_message entries as user messages with wrapping", async () => {
-    const result = expectParsed(
-      await parsePiSession(path.join(FIXTURES_DIR, "pi-custom-message.jsonl"), "test-project"),
-    );
+  const customEntriesPath = path.join(FIXTURES_DIR, "pi-custom-entries.jsonl");
+  const customMessagePath = path.join(FIXTURES_DIR, "pi-custom-message.jsonl");
 
-    const customMsg = result.messages.find((m) =>
-      m.content.some((b) => b.type === "text" && b.text.includes("custom-message")),
-    );
-    if (!customMsg) {
-      throw new Error("Expected a custom_message to be surfaced");
+  function piCustomText(result: ParseResult, id: string): string {
+    const msg = result.messages.find((m) => m.id === id);
+    const content: ContentBlock[] = msg?.content ?? [];
+    const text = content.find((b): b is TextContentBlock => b.type === "text")?.text;
+    if (msg?.role !== "user" || text === undefined) {
+      throw new Error(`Expected a custom text message for id=${id}`);
     }
-    expect(customMsg.role).toBe("user");
+    return text;
+  }
 
-    const text = (customMsg.content[0] as TextContentBlock).text;
-    expect(text).toContain('customType="subagent-slash-result"');
-    expect(text).toContain("Subagent finished: here is the synthesized finding.");
+  test("surfaces every custom payload generically with stable envelope metadata", async () => {
+    const result = expectParsed(await parsePiSession(customEntriesPath, "test-project"));
+    const ids = [
+      "c-vault",
+      "c-array",
+      "c-string",
+      "c-number",
+      "c-boolean",
+      "c-null",
+      "c-omitted",
+      "c-unknown",
+      "c-missing-type",
+      "c-bad-type",
+    ];
+    const surfaced = result.messages.filter((m) => ids.includes(m.id));
+    expect(surfaced).toHaveLength(ids.length);
+    expect(surfaced.every((m) => m.role === "user")).toBe(true);
+
+    // Stable envelope metadata and file ordering are preserved.
+    const vault = result.messages.find((m) => m.id === "c-vault");
+    expect(vault?.parentId).toBe("u1");
+    expect(vault?.timestamp).toBe("2026-03-15T20:10:01.000Z");
+    expect(vault?.sessionId).toBe("pi-custom-entries");
+    const order = result.messages.map((m) => m.id);
+    expect(order.indexOf("u1")).toBeLessThan(order.indexOf("c-vault"));
+    expect(order.indexOf("c-bad-type")).toBeLessThan(order.indexOf("a1"));
   });
 
-  test("renders pi web-search-results custom records with truncated snippets", async () => {
-    const result = expectParsed(
-      await parsePiSession(path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl"), "test-project"),
+  test("preserves custom payload JSON verbatim and distinguishes null from omitted data", async () => {
+    const result = expectParsed(await parsePiSession(customEntriesPath, "test-project"));
+    // Exact assertions on the generic envelope so payload interpretation cannot
+    // quietly return.
+    expect(piCustomText(result, "c-vault")).toBe(
+      '<pi:custom>{"customType":"fart-vault","data":{"credential":"ghp_abcdefghijklmnopqrstuvwxyz123456","note":"vault fart"}}</pi:custom>',
     );
-
-    const search = result.messages.find((m) =>
-      m.content.some((b) => b.type === "text" && b.text.includes("HEADMARKER_FART")),
+    expect(piCustomText(result, "c-array")).toBe(
+      '<pi:custom>{"customType":"fart-array","data":["toot","poot","blorp"]}</pi:custom>',
     );
-    if (!search) {
-      throw new Error("Expected a web-search-results fetch message to be surfaced");
-    }
-    expect(search.role).toBe("user");
-
-    const text = (search.content[0] as TextContentBlock).text;
-    expect(text).toContain("https://example.com/fart-facts");
-    expect(text).toContain("The Science of Farts");
-    // Snippet is truncated, so the head survives but the tail past ~300 chars is dropped.
-    expect(text).toContain("HEADMARKER_FART");
-    expect(text).not.toContain("TAILMARKER_FART");
-    // Failed fetches surface their error, not silent emptiness.
-    expect(text).toContain("https://example.com/missing-fart");
-    expect(text).toContain("timed out smelling the fart");
+    expect(piCustomText(result, "c-string")).toBe(
+      '<pi:custom>{"customType":"fart-string","data":"silent-but-deadly"}</pi:custom>',
+    );
+    expect(piCustomText(result, "c-number")).toBe(
+      '<pi:custom>{"customType":"fart-number","data":42}</pi:custom>',
+    );
+    expect(piCustomText(result, "c-boolean")).toBe(
+      '<pi:custom>{"customType":"fart-boolean","data":true}</pi:custom>',
+    );
+    // Explicit null carries a data key; an omitted data field does not.
+    expect(piCustomText(result, "c-null")).toBe(
+      '<pi:custom>{"customType":"fart-null","data":null}</pi:custom>',
+    );
+    expect(piCustomText(result, "c-omitted")).toBe(
+      '<pi:custom>{"customType":"fart-omitted"}</pi:custom>',
+    );
   });
 
-  test("renders pi web-search-results search records with query, answer snippet, and sources", async () => {
-    const result = expectParsed(
-      await parsePiSession(path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl"), "test-project"),
-    );
-
-    const search = result.messages.find((m) =>
-      m.content.some((b) => b.type === "text" && b.text.includes("FART_QUERY")),
-    );
-    if (!search) {
-      throw new Error("Expected a web-search-results search message to be surfaced");
-    }
-    expect(search.role).toBe("user");
-
-    const text = (search.content[0] as TextContentBlock).text;
-    expect(text).toContain("FART_QUERY beans nutrition facts");
-    // The synthesized answer is the payload, but still snippet-truncated.
-    expect(text).toContain("ANSWER_HEAD");
-    expect(text).not.toContain("ANSWER_TAIL");
-    // Sources keep title + url so the search stays traceable.
-    expect(text).toContain("Bean Science");
-    expect(text).toContain("https://example.com/bean-science");
-  });
-
-  test("surfaces pi-goal custom records generically without overfitting their schema", async () => {
-    const outcome = await parsePiSession(
-      path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl"),
-      "test-project",
-    );
+  test("arbitrary custom types and non-object payloads never warn; only envelope problems do", async () => {
+    const outcome = await parsePiSession(customEntriesPath, "test-project");
     const result = expectParsed(outcome);
 
-    // pi-goal is a pi-owned custom extension whose payload shape can change, so
-    // we serialize it verbatim instead of hand-fitting field names. Both records
-    // in the fixture surface (uniform handling — a null goal is no longer
-    // special-cased into a silent skip).
-    const goalMsgs = result.messages.filter((m) =>
-      m.content.some((b) => b.type === "text" && b.text.includes('customType="pi-goal"')),
+    // Envelope-broken records still surface their data verbatim.
+    expect(piCustomText(result, "c-missing-type")).toBe(
+      '<pi:custom>{"data":{"missingType":true}}</pi:custom>',
     );
-    expect(goalMsgs).toHaveLength(2);
-
-    const active = goalMsgs.find((m) =>
-      m.content.some((b) => b.type === "text" && b.text.includes("ship the fart detector")),
+    expect(piCustomText(result, "c-bad-type")).toBe(
+      '<pi:custom>{"data":{"invalidType":true}}</pi:custom>',
     );
-    expect(active).toBeDefined();
-    if (!active) {
-      throw new Error("Expected the active pi-goal objective to be surfaced");
-    }
 
-    const text = (active.content[0] as TextContentBlock).text;
-    expect(text).toContain("<pi:custom ");
-    expect(text).toContain('"ship the fart detector"');
-
-    // Custom records are handled, not errors — no warnings name them.
-    expect(outcome.warnings.some((w) => w.message.includes("pi-goal"))).toBe(false);
+    // The well-formed fixture warns only on the missing/invalid customType
+    // envelope (one coalesced warning covering both records); arbitrary types
+    // and every payload form never warn.
+    expect(outcome.warnings).toHaveLength(1);
+    expect(outcome.warnings[0]).toEqual(
+      expect.objectContaining({ kind: "missing-field", count: 2 }),
+    );
+    expect(outcome.warnings[0]?.message).toContain("customType");
   });
 
-  test("warns when a recognized pi extension carries a malformed payload", async () => {
-    const outcome = await parsePiSession(
-      path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl"),
-      "test-project",
-    );
-    expectParsed(outcome);
-
-    // A recognized extension (web-search-results) whose `data` is a string, not an
-    // object — a silent drop would hide a real record, so it must warn.
-    expect(
-      outcome.warnings.some(
-        (w) => w.kind === "missing-field" && w.message.includes("web-search-results"),
-      ),
-    ).toBe(true);
+  test("custom-message strings stay searchable through the provenance wrapper", async () => {
+    const result = expectParsed(await parsePiSession(customMessagePath, "test-project"));
+    const msg = result.messages.find((m) => m.id === "cm1");
+    const content: ContentBlock[] = msg?.content ?? [];
+    const text = content.find((b): b is TextContentBlock => b.type === "text")?.text;
+    expect(msg?.role).toBe("user");
+    expect(text).toContain('<pi:custom-message customType="fart-string">');
+    expect(text).toContain("silent but deadly string fart");
   });
 
-  test("surfaces unrecognized pi custom records generically instead of warning", async () => {
-    const filePath = path.join(FIXTURES_DIR, "pi-custom-extensions.jsonl");
-    const outcome = await parsePiSession(filePath, "test-project");
+  test("custom-message text arrays stay searchable with a provenance marker", async () => {
+    const result = expectParsed(await parsePiSession(customMessagePath, "test-project"));
+    const content: ContentBlock[] = result.messages.find((m) => m.id === "cm2")?.content ?? [];
+    const texts = content
+      .filter((b): b is TextContentBlock => b.type === "text")
+      .map((b) => b.text);
+    expect(texts.some((t) => t.includes('customType="fart-text-array"'))).toBe(true);
+    expect(texts).toContain("first fart");
+    expect(texts).toContain("second fart");
+  });
+
+  test("custom-message images retain their media type, including image-only messages", async () => {
+    const result = expectParsed(await parsePiSession(customMessagePath, "test-project"));
+    const mediaTypes = (id: string) => {
+      const content: ContentBlock[] = result.messages.find((m) => m.id === id)?.content ?? [];
+      return content
+        .filter((b) => b.type === "image")
+        .map((b) => (b as { mediaType?: string }).mediaType);
+    };
+    // Image-only messages are not dropped for lack of a text body.
+    expect(mediaTypes("cm3")).toEqual(["image/png"]);
+    expect(mediaTypes("cm4")).toEqual(["image/jpeg"]);
+  });
+
+  test("well-formed custom-message records warn only on unsupported content blocks", async () => {
+    const outcome = await parsePiSession(customMessagePath, "test-project");
     expectParsed(outcome);
-
-    // An unknown customType is captured verbatim, not warned-and-dropped: custom
-    // extensions are owned by pi/third parties, so variety is normal, not error.
-    const fart = outcome.result?.messages.find((m) =>
-      m.content.some((b) => b.type === "text" && b.text.includes('customType="fart-o-matic"')),
-    );
-    expect(fart).toBeDefined();
-
-    expect(outcome.warnings.some((w) => w.type === "fart-o-matic")).toBe(false);
+    expect(outcome.warnings).toEqual([
+      expect.objectContaining({
+        kind: "unknown-content-block-type",
+        type: "fart-unknown-block",
+        context: "content block",
+      }),
+    ]);
   });
 
   test("returns structured warnings for unknown pi record types", async () => {

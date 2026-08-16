@@ -8,7 +8,6 @@ import {
   type RawContentBlock,
 } from "./shared.ts";
 import {
-  MESSAGE_ROLES,
   createArtifactLink,
   createAssistantMessage,
   createPrLink,
@@ -26,8 +25,9 @@ import {
 // Record types that exist in the transcript but do not produce a CleanMessage.
 // Some are pure noise (progress, file-history-snapshot, attachment); others are
 // consumed for session state by explicit handler branches in classifyClaudeRecord
-// (summary, ai-title, custom-title, worktree-state). Both kinds live here so
-// KNOWN_TYPES below can suppress the "Unknown record type" warning uniformly.
+// (summary, ai-title, custom-title, worktree-state), which are guarded on the field
+// they read -- a record omitting it falls through to here. This is the only set that
+// suppresses the "Unknown record type" warning.
 const NON_MESSAGE_TYPES = new Set([
   "progress",
   "file-history-snapshot",
@@ -47,7 +47,6 @@ const NON_MESSAGE_TYPES = new Set([
   "bridge-session",
   "agent-setting",
 ]);
-const KNOWN_TYPES = new Set([...NON_MESSAGE_TYPES, ...MESSAGE_ROLES, "pr-link", "frame-link"]);
 
 // Content blocks that carry session metadata, not conversation content.
 // "fallback" records a mid-session model switch (e.g. fable-5 -> opus-4-8).
@@ -66,6 +65,7 @@ interface ClaudeRecord {
   customTitle?: string;
   aiTitle?: string;
   leafUuid?: string;
+  parentSessionId?: unknown; // narrowed at runtime, unlike the rest of this shape
   prNumber?: number;
   prUrl?: string;
   prRepository?: string;
@@ -108,6 +108,7 @@ interface SessionState {
   createdAt?: string;
   updatedAt?: string;
   model?: string;
+  parentSessionId?: string;
   worktree?: WorktreeInfo;
 }
 
@@ -184,13 +185,32 @@ function classifyClaudeRecord(
     captureWorktree(state, record);
     return "skip";
   }
+  // Header of a forked subagent transcript; parentLastUuid and contextLength are
+  // unread. This link outranks the archive path, so an unusable one warns instead of
+  // falling back to a path guess that nothing downstream could tell apart.
+  if (record.type === "fork-context-ref") {
+    const parent = record.parentSessionId;
+    if (typeof parent !== "string" || parent === "") {
+      lineContext.missingField(
+        `fork-context-ref has no usable parentSessionId (${JSON.stringify(parent)}); falling back to the archive path`,
+      );
+      return "skip";
+    }
+    // First wins, matching updateSessionState.
+    if (state.parentSessionId !== undefined && state.parentSessionId !== parent) {
+      lineContext.missingField(
+        `fork-context-ref disagrees with an earlier one (kept ${state.parentSessionId}, ignored ${parent})`,
+      );
+      return "skip";
+    }
+    state.parentSessionId = parent;
+    return "skip";
+  }
   if (NON_MESSAGE_TYPES.has(record.type) || record.isMeta) {
     return "skip";
   }
   if (record.type !== "user" && record.type !== "assistant") {
-    if (!KNOWN_TYPES.has(record.type)) {
-      lineContext.unknownType(record.type, "record");
-    }
+    lineContext.unknownType(record.type, "record");
     return "skip";
   }
   return "process";
@@ -347,7 +367,9 @@ export async function parseClaudeSession(
       model: state.model,
       createdAt: state.createdAt,
       updatedAt: state.updatedAt,
-      parentSessionId: extractParentSessionIdFromPath(jsonlPath),
+      // The path is only an inference from the archive layout, so the record wins.
+      // A fork reuses its parent's sessionId, so id === parentSessionId is normal.
+      parentSessionId: state.parentSessionId ?? extractParentSessionIdFromPath(jsonlPath),
       worktree: state.worktree,
     },
     messages,

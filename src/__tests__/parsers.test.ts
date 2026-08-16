@@ -368,6 +368,57 @@ describe("Claude parser", () => {
     }
   });
 
+  test("skips fork-context-ref records without an unknown-type warning", async () => {
+    const outcome = await parseClaudeSession(
+      path.join(FIXTURES_DIR, "claude-fork.jsonl"),
+      "test-project",
+    );
+
+    const unknownFork = outcome.warnings.filter(
+      (w) => w.kind === "unknown-record-type" && w.type === "fork-context-ref",
+    );
+    expect(unknownFork).toEqual([]);
+    expect(expectParsed(outcome).messages).toHaveLength(3);
+  });
+
+  test("populates parentSessionId from fork-context-ref when the path has no parent", async () => {
+    const result = expectParsed(
+      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-fork.jsonl"), "test-project"),
+    );
+
+    expect(result.meta.parentSessionId).toBe("fa27fa27-fa27-4fa2-8fa2-7fa27fa27fa2");
+  });
+
+  // The record is what Claude wrote; the path is only an inference from the
+  // archive layout. A relocated archive must not rewrite the parent link.
+  test("fork-context-ref beats the archive path when the two disagree", async () => {
+    const pathUuid = "b0b0b0b0-1234-4abc-9def-0123456789ab";
+    const subagentPath = path.join(
+      FIXTURES_DIR,
+      "..",
+      "synthetic-archive",
+      "claude",
+      pathUuid,
+      "subagents",
+      "agent-fart.jsonl",
+    );
+
+    const fs = await import("node:fs");
+    fs.mkdirSync(path.dirname(subagentPath), { recursive: true });
+    fs.copyFileSync(path.join(FIXTURES_DIR, "claude-fork.jsonl"), subagentPath);
+
+    try {
+      const result = expectParsed(await parseClaudeSession(subagentPath, "test-project"));
+      expect(result.meta.parentSessionId).toBe("fa27fa27-fa27-4fa2-8fa2-7fa27fa27fa2");
+      expect(result.meta.parentSessionId).not.toBe(pathUuid);
+    } finally {
+      fs.rmSync(path.join(FIXTURES_DIR, "..", "synthetic-archive"), {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
   test("does not set parentSessionId for non-subagent sessions", async () => {
     const result = expectParsed(
       await parseClaudeSession(path.join(FIXTURES_DIR, "claude-simple.jsonl"), "test-project"),

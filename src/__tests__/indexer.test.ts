@@ -636,13 +636,13 @@ describe("indexer", () => {
     expect(firstCount?.count).toBeGreaterThan(0);
     expect(
       db.query<{ version: number }, []>("SELECT version FROM schema_version").get()?.version,
-    ).toBe(14);
+    ).toBe(15);
     closeDb();
 
     // Simulate a stale cache pinned to the previous index version.
     const stale = new Database(dbPath);
     stale.exec("PRAGMA foreign_keys = ON");
-    stale.run("UPDATE schema_version SET version = 13");
+    stale.run("UPDATE schema_version SET version = 14");
     stale.close();
 
     // Reopen: the version mismatch drops and recreates the cache tables through
@@ -650,7 +650,7 @@ describe("indexer", () => {
     db = getDb(dbPath);
     expect(
       db.query<{ version: number }, []>("SELECT version FROM schema_version").get()?.version,
-    ).toBe(14);
+    ).toBe(15);
     expect(
       db.query<{ count: number }, []>("SELECT COUNT(*) as count FROM messages").get()?.count,
     ).toBe(0);

@@ -27,7 +27,8 @@ import {
 // consumed for session state by explicit handler branches in classifyClaudeRecord
 // (summary, ai-title, custom-title, worktree-state), which are guarded on the field
 // they read -- a record omitting it falls through to here. This is the only set that
-// suppresses the "Unknown record type" warning.
+// suppresses the "Unknown record type" warning. To refresh it after a CLI upgrade,
+// read the record-type retention table in the claude binary (grep for "atis-latch").
 const NON_MESSAGE_TYPES = new Set([
   "progress",
   "file-history-snapshot",
@@ -46,6 +47,24 @@ const NON_MESSAGE_TYPES = new Set([
   "relocated",
   "bridge-session",
   "agent-setting",
+  "agent-color",
+  "ended-by-model",
+  "tag",
+  "history-suppression",
+  "attribution-snapshot",
+  "content-replacement",
+  "observer-ref",
+  "isolation-latch",
+  // Server-issued token naming the feature-flag snapshot the conversation is pinned
+  // to, echoed back to the API as the x-cc-atis header. Rewritten on every turn.
+  "atis-latch",
+  // Which published artifacts this session watches for new comments, so a resumed
+  // session can re-arm the watch.
+  "artifact-comment-monitor",
+  "artifact-autoreact-ledger",
+  "marble-origami-commit",
+  "marble-origami-snapshot",
+  "marble-origami-reset",
 ]);
 
 // Content blocks that carry session metadata, not conversation content.

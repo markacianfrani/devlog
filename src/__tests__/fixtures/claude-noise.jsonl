@@ -12,6 +12,23 @@
 {"type":"frame-link","sessionId":"test-session-4","path":"/home/user/project/scratchpad/fart-chart.html","frameUrl":"https://claude.ai/code/artifact/fart-a-doodle-doo","timestamp":"2026-01-20T10:00:03.000Z"}
 {"type":"relocated","sessionId":"test-session-4","relocatedCwd":"/home/user/project/.claude/worktrees/fart-spike"}
 {"type":"agent-setting","agentSetting":"claude","sessionId":"test-session-4"}
+{"type":"last-prompt","sessionId":"test-session-4","prompt":"make the fart louder"}
+{"type":"agent-color","agentColor":"brown","sessionId":"test-session-4"}
+{"type":"agent-name","agentName":"toot","sessionId":"test-session-4"}
+{"type":"tag","tag":"fart-spike","sessionId":"test-session-4"}
+{"type":"ended-by-model","sessionId":"test-session-4","endedByModel":true}
+{"type":"history-suppression","sessionId":"test-session-4"}
+{"type":"attribution-snapshot","sessionId":"test-session-4","attribution":{"source":"whoopee-cushion"}}
+{"type":"content-replacement","sessionId":"test-session-4","replacements":[]}
+{"type":"observer-ref","sessionId":"test-session-4","observerId":"obs-fart-1"}
+{"type":"isolation-latch","sessionId":"test-session-4","isolation":"worktree"}
+{"type":"atis-latch","sessionId":"test-session-4","atis":"fart-flags-v1"}
+{"type":"artifact-comment-monitor","sessionId":"test-session-4","artifactUrl":"https://claude.ai/code/artifact/fart-a-doodle-doo"}
+{"type":"artifact-autoreact-ledger","v":1,"sessionId":"test-session-4","entries":[]}
+{"type":"cost-state","sessionId":"test-session-4","totalCostUSD":0.42,"totalAPIDuration":1200,"totalDuration":9001,"startTime":1787708140780,"modelUsage":{},"hasUnknownModelCost":false}
+{"type":"marble-origami-commit","sessionId":"test-session-4","commit":"fart-fold-1"}
+{"type":"marble-origami-snapshot","sessionId":"test-session-4","snapshot":"fart-fold-snap"}
+{"type":"marble-origami-reset","sessionId":"test-session-4"}
 {"type":"user","sessionId":"test-session-4","uuid":"msg-user-1","parentUuid":null,"timestamp":"2026-01-20T10:00:00.000Z","cwd":"/home/user/project","isMeta":true,"message":{"role":"user","content":"Meta message to skip"}}
 {"type":"user","sessionId":"test-session-4","uuid":"msg-user-2","parentUuid":null,"timestamp":"2026-01-20T10:00:01.000Z","cwd":"/home/user/project","message":{"role":"user","content":"Real user message"}}
 {"type":"assistant","sessionId":"test-session-4","uuid":"msg-asst-1","parentUuid":"msg-user-2","timestamp":"2026-01-20T10:00:05.000Z","cwd":"/home/user/project","message":{"role":"assistant","model":"claude-opus-4-5-20251101","content":[{"type":"fallback","from":{"model":"claude-fart-5"},"to":{"model":"claude-fart-4-8"}},{"type":"thinking","thinking":"Let me think about this..."},{"type":"text","text":"Here is my response."}],"usage":{"input_tokens":100,"output_tokens":50}}}

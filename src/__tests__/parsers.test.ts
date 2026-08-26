@@ -172,6 +172,21 @@ describe("Claude parser", () => {
     expect((at(asstMsg.content, 1) as TextContentBlock).text).toBe("Here is my response.");
   });
 
+  // One net for every type in NON_MESSAGE_TYPES: the fixture carries one record of
+  // each, so a CLI upgrade that adds a type fails here instead of only showing up as
+  // warning spew during a real index.
+  test("treats every known non-message record type as noise", async () => {
+    const outcome = await parseClaudeSession(
+      path.join(FIXTURES_DIR, "claude-noise.jsonl"),
+      "test-project",
+    );
+
+    const unknownTypes = outcome.warnings
+      .filter((w) => w.kind === "unknown-record-type")
+      .map((w) => w.type);
+    expect(unknownTypes).toEqual([]);
+  });
+
   test("skips bridge-session records without an unknown-type warning", async () => {
     const outcome = await parseClaudeSession(
       path.join(FIXTURES_DIR, "claude-noise.jsonl"),

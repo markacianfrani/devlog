@@ -44,6 +44,9 @@ const NON_MESSAGE_TYPES = new Set([
   "mode",
   "attachment",
   "worktree-state",
+  // Session cost and token totals, rewritten on every turn. devlog derives its own
+  // token counts from the assistant records and stores no cost, so this is noise.
+  "cost-state",
   "relocated",
   "bridge-session",
   "agent-setting",

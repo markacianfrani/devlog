@@ -67,7 +67,7 @@ async function main() {
       break;
     }
     case "mcp": {
-      const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+      const { StdioServerTransport } = await import("@modelcontextprotocol/server/stdio");
       const { createServer } = await import("./mcp-server.ts");
       const transport = new StdioServerTransport();
       const server = createServer();

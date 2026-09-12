@@ -1,7 +1,8 @@
 import path from "node:path";
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/server";
+import { toStandardJsonSchema } from "@valibot/to-json-schema";
+import * as v from "valibot";
 
 import { loadConfig } from "./config.ts";
 import { getDb, getReadonlyDb } from "./db.ts";
@@ -76,22 +77,34 @@ function formatSessionHeader(row: SessionRow): string {
     .join("\n");
 }
 
+const searchLimitSchema = v.optional(
+  v.pipe(
+    v.number(),
+    v.integer(),
+    v.minValue(1),
+    v.maxValue(50),
+    v.description("Max results (default 10)"),
+  ),
+  10,
+);
+
 function registerSearch(server: McpServer) {
-  server.tool(
+  server.registerTool(
     "search",
-    "Full-text search across all past session transcripts. Returns matching sessions with context snippets. Use this to find sessions where a topic was discussed.",
     {
-      query: z
-        .string()
-        .describe("Search query (supports FTS5 syntax e.g. 'word1 word2', '\"exact phrase\"')"),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(50)
-        .optional()
-        .default(10)
-        .describe("Max results (default 10)"),
+      description:
+        "Full-text search across all past session transcripts. Returns matching sessions with context snippets. Use this to find sessions where a topic was discussed.",
+      inputSchema: toStandardJsonSchema(
+        v.object({
+          query: v.pipe(
+            v.string(),
+            v.description(
+              "Search query (supports FTS5 syntax e.g. 'word1 word2', '\"exact phrase\"')",
+            ),
+          ),
+          limit: searchLimitSchema,
+        }),
+      ),
     },
     async ({ query, limit }) => {
       const db = getDb(CONFIGURED_DB_PATH);
@@ -122,25 +135,38 @@ function registerSearch(server: McpServer) {
 }
 
 function registerListSessions(server: McpServer) {
-  server.tool(
+  server.registerTool(
     "list_sessions",
-    "List recent sessions, optionally filtered by project or source.",
     {
-      project: z
-        .string()
-        .optional()
-        .describe(
-          "Filter by project. Accepts an absolute path (/Users/you/Code/my-app) for exact match, or a name/keyword (e.g. 'quoting-ui', 'tools') for fuzzy substring match against the project slug.",
-        ),
-      source: z.enum(["claude", "opencode", "pi"]).optional().describe("Filter by AI tool source"),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .default(20)
-        .describe("Max results (default 20)"),
+      description: "List recent sessions, optionally filtered by project or source.",
+      inputSchema: toStandardJsonSchema(
+        v.object({
+          project: v.optional(
+            v.pipe(
+              v.string(),
+              v.description(
+                "Filter by project. Accepts an absolute path (/Users/you/Code/my-app) for exact match, or a name/keyword (e.g. 'quoting-ui', 'tools') for fuzzy substring match against the project slug.",
+              ),
+            ),
+          ),
+          source: v.optional(
+            v.pipe(
+              v.picklist(["claude", "opencode", "pi"]),
+              v.description("Filter by AI tool source"),
+            ),
+          ),
+          limit: v.optional(
+            v.pipe(
+              v.number(),
+              v.integer(),
+              v.minValue(1),
+              v.maxValue(100),
+              v.description("Max results (default 20)"),
+            ),
+            20,
+          ),
+        }),
+      ),
     },
     async ({ project, source, limit }) => {
       const db = getDb(CONFIGURED_DB_PATH);
@@ -237,36 +263,49 @@ function renderMessageBlocks(
 }
 
 function registerGetSession(server: McpServer) {
-  server.tool(
+  server.registerTool(
     "get_session",
-    "Retrieve the transcript of a session. Defaults to text-only (skips tool calls). Use include_tools=true if you need to see what tools were called. Paginate with limit/offset for long sessions.",
     {
-      id: z.string().describe("The session_id value from search or list_sessions results"),
-      include_tools: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Include tool calls and results (default false — text only)"),
-      include_thinking: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Include extended thinking blocks (default false)"),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(200)
-        .optional()
-        .default(50)
-        .describe("Max number of messages to return (default 50)"),
-      offset: z.coerce
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .default(0)
-        .describe("Message offset for pagination (default 0)"),
+      description:
+        "Retrieve the transcript of a session. Defaults to text-only (skips tool calls). Use include_tools=true if you need to see what tools were called. Paginate with limit/offset for long sessions.",
+      inputSchema: toStandardJsonSchema(
+        v.object({
+          id: v.pipe(
+            v.string(),
+            v.description("The session_id value from search or list_sessions results"),
+          ),
+          include_tools: v.optional(
+            v.pipe(
+              v.boolean(),
+              v.description("Include tool calls and results (default false — text only)"),
+            ),
+            false,
+          ),
+          include_thinking: v.optional(
+            v.pipe(v.boolean(), v.description("Include extended thinking blocks (default false)")),
+            false,
+          ),
+          limit: v.optional(
+            v.pipe(
+              v.number(),
+              v.integer(),
+              v.minValue(1),
+              v.maxValue(200),
+              v.description("Max number of messages to return (default 50)"),
+            ),
+            50,
+          ),
+          offset: v.optional(
+            v.pipe(
+              v.number(),
+              v.integer(),
+              v.minValue(0),
+              v.description("Message offset for pagination (default 0)"),
+            ),
+            0,
+          ),
+        }),
+      ),
     },
     async ({ id: session_id, include_tools, include_thinking, limit, offset }) => {
       const db = getDb(CONFIGURED_DB_PATH);
@@ -340,10 +379,13 @@ function registerGetSession(server: McpServer) {
 }
 
 function registerSchema(server: McpServer) {
-  server.tool(
+  server.registerTool(
     "schema",
-    "Return the exact column names for all devlog tables. Call this before writing a query tool call to avoid column name errors.",
-    {},
+    {
+      description:
+        "Return the exact column names for all devlog tables. Call this before writing a query tool call to avoid column name errors.",
+      inputSchema: toStandardJsonSchema(v.object({})),
+    },
     () => {
       const db = getDb(CONFIGURED_DB_PATH);
       const tables = [
@@ -369,11 +411,16 @@ function registerSchema(server: McpServer) {
 }
 
 function registerQuery(server: McpServer) {
-  server.tool(
+  server.registerTool(
     "query",
-    "Execute a raw SQL SELECT query against the devlog database. The DB is read-only so only SELECT statements work. Tables: sessions, messages, content_blocks, messages_fts.",
     {
-      sql: z.string().describe("SQL SELECT query to execute"),
+      description:
+        "Execute a raw SQL SELECT query against the devlog database. The DB is read-only so only SELECT statements work. Tables: sessions, messages, content_blocks, messages_fts.",
+      inputSchema: toStandardJsonSchema(
+        v.object({
+          sql: v.pipe(v.string(), v.description("SQL SELECT query to execute")),
+        }),
+      ),
     },
     async ({ sql }) => {
       const db = getReadonlyDb(CONFIGURED_DB_PATH);
@@ -384,10 +431,13 @@ function registerQuery(server: McpServer) {
   );
 }
 
-export function createServer(): McpServer {
+export function createServer(options?: { logging?: boolean }): McpServer {
   const server = new McpServer(
     { name: "devlog", version: "1.0.0" },
-    { instructions: INSTRUCTIONS },
+    {
+      instructions: INSTRUCTIONS,
+      ...(options?.logging ? { capabilities: { logging: {} } } : {}),
+    },
   );
 
   registerSearch(server);

@@ -1,0 +1,16 @@
+# MCP conformance scenarios expected to fail: devlog intentionally does not
+# implement these (optional) server features. devlog exposes tools only —
+# no resources, prompts, or argument completions.
+server:
+  - resources-list
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+  - resources-subscribe
+  - resources-unsubscribe
+  - prompts-list
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
+  - completion-complete

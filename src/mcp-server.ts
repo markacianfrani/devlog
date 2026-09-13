@@ -420,13 +420,10 @@ function registerTool<S extends v.ObjectSchema<v.ObjectEntries, undefined>>(
   );
 }
 
-export function createServer(options?: { logging?: boolean }): McpServer {
+export function createServer(): McpServer {
   const server = new McpServer(
     { name: "devlog", version: "1.0.0" },
-    {
-      instructions: INSTRUCTIONS,
-      ...(options?.logging ? { capabilities: { logging: {} } } : {}),
-    },
+    { instructions: INSTRUCTIONS },
   );
 
   registerTool(server, "search", TOOLS.search);

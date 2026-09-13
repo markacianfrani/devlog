@@ -36,8 +36,7 @@
     "lint:fix": "oxlint --tsconfig tsconfig.json --type-aware --fix .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "prepare": "prek install || true",
-    "conformance:server": "bun run scripts/mcp-conformance-server.ts"
+    "prepare": "prek install || true"
   },
   "dependencies": {
     "@clack/prompts": "^1.1.0",

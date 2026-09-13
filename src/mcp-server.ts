@@ -78,7 +78,7 @@ interface BlockRow {
 // --- rendering helpers ----------------------------------------------------
 
 function textResult(text: string): CallToolResult {
-  return textResult(text);
+  return { content: [{ type: "text", text }] };
 }
 
 function formatSessionHeader(row: SessionRow): string {

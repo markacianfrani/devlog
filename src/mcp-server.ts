@@ -77,16 +77,17 @@ function formatSessionHeader(row: SessionRow): string {
     .join("\n");
 }
 
-const searchLimitSchema = v.optional(
-  v.pipe(
-    v.number(),
-    v.integer(),
-    v.minValue(1),
-    v.maxValue(50),
-    v.description("Max results (default 10)"),
-  ),
-  10,
-);
+const limitSchema = (max: number, def: number, description: string) =>
+  v.optional(
+    v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(max), v.description(description)),
+    def,
+  );
+
+const offsetSchema = (description: string) =>
+  v.optional(v.pipe(v.number(), v.integer(), v.minValue(0), v.description(description)), 0);
+
+const flagSchema = (description: string) =>
+  v.optional(v.pipe(v.boolean(), v.description(description)), false);
 
 function registerSearch(server: McpServer) {
   server.registerTool(
@@ -102,7 +103,7 @@ function registerSearch(server: McpServer) {
               "Search query (supports FTS5 syntax e.g. 'word1 word2', '\"exact phrase\"')",
             ),
           ),
-          limit: searchLimitSchema,
+          limit: limitSchema(50, 10, "Max results (default 10)"),
         }),
       ),
     },
@@ -155,16 +156,7 @@ function registerListSessions(server: McpServer) {
               v.description("Filter by AI tool source"),
             ),
           ),
-          limit: v.optional(
-            v.pipe(
-              v.number(),
-              v.integer(),
-              v.minValue(1),
-              v.maxValue(100),
-              v.description("Max results (default 20)"),
-            ),
-            20,
-          ),
+          limit: limitSchema(100, 20, "Max results (default 20)"),
         }),
       ),
     },
@@ -274,36 +266,10 @@ function registerGetSession(server: McpServer) {
             v.string(),
             v.description("The session_id value from search or list_sessions results"),
           ),
-          include_tools: v.optional(
-            v.pipe(
-              v.boolean(),
-              v.description("Include tool calls and results (default false — text only)"),
-            ),
-            false,
-          ),
-          include_thinking: v.optional(
-            v.pipe(v.boolean(), v.description("Include extended thinking blocks (default false)")),
-            false,
-          ),
-          limit: v.optional(
-            v.pipe(
-              v.number(),
-              v.integer(),
-              v.minValue(1),
-              v.maxValue(200),
-              v.description("Max number of messages to return (default 50)"),
-            ),
-            50,
-          ),
-          offset: v.optional(
-            v.pipe(
-              v.number(),
-              v.integer(),
-              v.minValue(0),
-              v.description("Message offset for pagination (default 0)"),
-            ),
-            0,
-          ),
+          include_tools: flagSchema("Include tool calls and results (default false — text only)"),
+          include_thinking: flagSchema("Include extended thinking blocks (default false)"),
+          limit: limitSchema(200, 50, "Max number of messages to return (default 50)"),
+          offset: offsetSchema("Message offset for pagination (default 0)"),
         }),
       ),
     },

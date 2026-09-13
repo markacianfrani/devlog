@@ -49,7 +49,8 @@ async function elicit(ctx: Ctx, message: string, requestedSchema: object) {
   }
 }
 
-function registerConformanceTools(server: McpServer) {
+// Static response tools exercising the content-type scenarios.
+function registerContentTools(server: McpServer) {
   server.registerTool("test_simple_text", { description: "Simple text" }, async () => ({
     content: [{ type: "text", text: "This is a simple text response for testing." }],
   }));
@@ -93,7 +94,11 @@ function registerConformanceTools(server: McpServer) {
       ],
     }),
   );
+}
 
+// Tools that exercise client capabilities: logging, progress, sampling,
+// elicitation, and error propagation.
+function registerInteractiveTools(server: McpServer) {
   server.registerTool(
     "test_tool_with_logging",
     { description: "Emits log notifications during execution", inputSchema: emptySchema },
@@ -267,7 +272,8 @@ Bun.serve({
       }
 
       const server = createServer({ logging: true });
-      registerConformanceTools(server);
+      registerContentTools(server);
+      registerInteractiveTools(server);
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: () => crypto.randomUUID(),
         enableDnsRebindingProtection: true,

@@ -1,7 +1,8 @@
 import path from "node:path";
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { type CallToolResult, McpServer } from "@modelcontextprotocol/server";
+import { toStandardJsonSchema } from "@valibot/to-json-schema";
+import * as v from "valibot";
 
 import { loadConfig } from "./config.ts";
 import { getDb, getReadonlyDb } from "./db.ts";
@@ -31,6 +32,22 @@ For project-scoped browsing:
 
 Call \`schema\` first before writing raw SQL — the most common mistake is \`updated\` instead of \`updated_at\`. Do NOT call \`schema\` for search or list_sessions.`;
 
+// --- schema field helpers -------------------------------------------------
+
+const limit = (max: number, def: number, description: string) =>
+  v.optional(
+    v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(max), v.description(description)),
+    def,
+  );
+
+const offset = (description: string) =>
+  v.optional(v.pipe(v.number(), v.integer(), v.minValue(0), v.description(description)), 0);
+
+const flag = (description: string) =>
+  v.optional(v.pipe(v.boolean(), v.description(description)), false);
+
+// --- row types ------------------------------------------------------------
+
 interface SessionRow {
   session_id: string;
   source: string;
@@ -58,6 +75,12 @@ interface BlockRow {
   tool_output: string | null;
 }
 
+// --- rendering helpers ----------------------------------------------------
+
+function textResult(text: string): CallToolResult {
+  return { content: [{ type: "text", text }] };
+}
+
 function formatSessionHeader(row: SessionRow): string {
   return [
     `session_id: ${row.session_id}`,
@@ -74,120 +97,6 @@ function formatSessionHeader(row: SessionRow): string {
   ]
     .filter(Boolean)
     .join("\n");
-}
-
-function registerSearch(server: McpServer) {
-  server.tool(
-    "search",
-    "Full-text search across all past session transcripts. Returns matching sessions with context snippets. Use this to find sessions where a topic was discussed.",
-    {
-      query: z
-        .string()
-        .describe("Search query (supports FTS5 syntax e.g. 'word1 word2', '\"exact phrase\"')"),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(50)
-        .optional()
-        .default(10)
-        .describe("Max results (default 10)"),
-    },
-    async ({ query, limit }) => {
-      const db = getDb(CONFIGURED_DB_PATH);
-      const rows = db
-        .query<SearchRow, [string, number]>(
-          `SELECT DISTINCT s.session_id, s.source, s.project, s.cwd, s.title, s.model,
-					        s.created_at, s.updated_at,
-					        snippet(messages_fts, 2, '<<', '>>', '...', 20) as snippet
-					 FROM messages_fts
-					 JOIN sessions s ON messages_fts.session_id = s.session_id
-					 WHERE messages_fts MATCH ?
-					 ORDER BY rank
-					 LIMIT ?`,
-        )
-        .all(query, limit);
-
-      if (rows.length === 0) {
-        return { content: [{ type: "text", text: "No results found." }] };
-      }
-
-      const text = rows
-        .map((r) => `${formatSessionHeader(r)}\nsnippet: ${r.snippet}`)
-        .join("\n\n---\n\n");
-
-      return { content: [{ type: "text", text }] };
-    },
-  );
-}
-
-function registerListSessions(server: McpServer) {
-  server.tool(
-    "list_sessions",
-    "List recent sessions, optionally filtered by project or source.",
-    {
-      project: z
-        .string()
-        .optional()
-        .describe(
-          "Filter by project. Accepts an absolute path (/Users/you/Code/my-app) for exact match, or a name/keyword (e.g. 'quoting-ui', 'tools') for fuzzy substring match against the project slug.",
-        ),
-      source: z.enum(["claude", "opencode", "pi"]).optional().describe("Filter by AI tool source"),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .default(20)
-        .describe("Max results (default 20)"),
-    },
-    async ({ project, source, limit }) => {
-      const db = getDb(CONFIGURED_DB_PATH);
-
-      // SQLite requires null (not undefined) to bind SQL NULL
-      let projectExact: string | null = null;
-      let projectLike: string | null = null;
-      if (project) {
-        if (path.isAbsolute(project)) {
-          projectExact = slugFromPath(project);
-        } else {
-          projectLike = `%${project.replace(/\s+/g, "-")}%`;
-        }
-      }
-      const sourceParam: string | null = source ?? null;
-
-      const rows = db
-        .query<
-          SessionRow,
-          [
-            string | null,
-            string | null,
-            string | null,
-            string | null,
-            string | null,
-            string | null,
-            number,
-          ]
-        >(
-          `SELECT session_id, source, project, cwd, title, model, created_at, updated_at
-					 FROM sessions
-					 WHERE (? IS NULL OR project = ?)
-					   AND (? IS NULL OR project LIKE ?)
-					   AND (? IS NULL OR source = ?)
-					 ORDER BY updated_at DESC NULLS LAST, mtime DESC
-					 LIMIT ?`,
-        )
-        .all(projectExact, projectExact, projectLike, projectLike, sourceParam, sourceParam, limit);
-
-      if (rows.length === 0) {
-        return { content: [{ type: "text", text: "No sessions found." }] };
-      }
-
-      const text = rows.map(formatSessionHeader).join("\n\n---\n\n");
-      return { content: [{ type: "text", text }] };
-    },
-  );
 }
 
 type MessageEntry = { role: string; timestamp: string | null; blocks: BlockRow[] };
@@ -236,39 +145,145 @@ function renderMessageBlocks(
   return lines;
 }
 
-function registerGetSession(server: McpServer) {
-  server.tool(
-    "get_session",
-    "Retrieve the transcript of a session. Defaults to text-only (skips tool calls). Use include_tools=true if you need to see what tools were called. Paginate with limit/offset for long sessions.",
-    {
-      id: z.string().describe("The session_id value from search or list_sessions results"),
-      include_tools: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Include tool calls and results (default false — text only)"),
-      include_thinking: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Include extended thinking blocks (default false)"),
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(200)
-        .optional()
-        .default(50)
-        .describe("Max number of messages to return (default 50)"),
-      offset: z.coerce
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .default(0)
-        .describe("Message offset for pagination (default 0)"),
+// --- tool table -----------------------------------------------------------
+
+// Args are typed as v.InferOutput of each schema; registerTool() below pairs
+// each schema with its handler, so the SDK receives a fully typed callback.
+const TOOLS = {
+  search: {
+    description:
+      "Full-text search across all past session transcripts. Returns matching sessions with context snippets. Use this to find sessions where a topic was discussed.",
+    schema: v.object({
+      query: v.pipe(
+        v.string(),
+        v.description("Search query (supports FTS5 syntax e.g. 'word1 word2', '\"exact phrase\"')"),
+      ),
+      limit: limit(50, 10, "Max results (default 10)"),
+    }),
+    async handler({ query, limit }: { query: string; limit: number }) {
+      const db = getDb(CONFIGURED_DB_PATH);
+      const rows = db
+        .query<SearchRow, [string, number]>(
+          `SELECT DISTINCT s.session_id, s.source, s.project, s.cwd, s.title, s.model,
+					        s.created_at, s.updated_at,
+					        snippet(messages_fts, 2, '<<', '>>', '...', 20) as snippet
+					 FROM messages_fts
+					 JOIN sessions s ON messages_fts.session_id = s.session_id
+					 WHERE messages_fts MATCH ?
+					 ORDER BY rank
+					 LIMIT ?`,
+        )
+        .all(query, limit);
+
+      if (rows.length === 0) {
+        return textResult("No results found.");
+      }
+
+      const text = rows
+        .map((r) => `${formatSessionHeader(r)}\nsnippet: ${r.snippet}`)
+        .join("\n\n---\n\n");
+
+      return textResult(text);
     },
-    async ({ id: session_id, include_tools, include_thinking, limit, offset }) => {
+  },
+
+  list_sessions: {
+    description: "List recent sessions, optionally filtered by project or source.",
+    schema: v.object({
+      project: v.optional(
+        v.pipe(
+          v.string(),
+          v.description(
+            "Filter by project. Accepts an absolute path (/Users/you/Code/my-app) for exact match, or a name/keyword (e.g. 'quoting-ui', 'tools') for fuzzy substring match against the project slug.",
+          ),
+        ),
+      ),
+      source: v.optional(
+        v.pipe(v.picklist(["claude", "opencode", "pi"]), v.description("Filter by AI tool source")),
+      ),
+      limit: limit(100, 20, "Max results (default 20)"),
+    }),
+    async handler({
+      project,
+      source,
+      limit,
+    }: {
+      project?: string;
+      source?: "claude" | "opencode" | "pi";
+      limit: number;
+    }) {
+      const db = getDb(CONFIGURED_DB_PATH);
+
+      // SQLite requires null (not undefined) to bind SQL NULL
+      let projectExact: string | null = null;
+      let projectLike: string | null = null;
+      if (project) {
+        if (path.isAbsolute(project)) {
+          projectExact = slugFromPath(project);
+        } else {
+          projectLike = `%${project.replace(/\s+/g, "-")}%`;
+        }
+      }
+      const sourceParam: string | null = source ?? null;
+
+      const rows = db
+        .query<
+          SessionRow,
+          [
+            string | null,
+            string | null,
+            string | null,
+            string | null,
+            string | null,
+            string | null,
+            number,
+          ]
+        >(
+          `SELECT session_id, source, project, cwd, title, model, created_at, updated_at
+					 FROM sessions
+					 WHERE (? IS NULL OR project = ?)
+					   AND (? IS NULL OR project LIKE ?)
+					   AND (? IS NULL OR source = ?)
+					 ORDER BY updated_at DESC NULLS LAST, mtime DESC
+					 LIMIT ?`,
+        )
+        .all(projectExact, projectExact, projectLike, projectLike, sourceParam, sourceParam, limit);
+
+      if (rows.length === 0) {
+        return textResult("No sessions found.");
+      }
+
+      const text = rows.map(formatSessionHeader).join("\n\n---\n\n");
+      return textResult(text);
+    },
+  },
+
+  get_session: {
+    description:
+      "Retrieve the transcript of a session. Defaults to text-only (skips tool calls). Use include_tools=true if you need to see what tools were called. Paginate with limit/offset for long sessions.",
+    schema: v.object({
+      id: v.pipe(
+        v.string(),
+        v.description("The session_id value from search or list_sessions results"),
+      ),
+      include_tools: flag("Include tool calls and results (default false — text only)"),
+      include_thinking: flag("Include extended thinking blocks (default false)"),
+      limit: limit(200, 50, "Max number of messages to return (default 50)"),
+      offset: offset("Message offset for pagination (default 0)"),
+    }),
+    async handler({
+      id: sessionId,
+      include_tools,
+      include_thinking,
+      limit,
+      offset,
+    }: {
+      id: string;
+      include_tools: boolean;
+      include_thinking: boolean;
+      limit: number;
+      offset: number;
+    }) {
       const db = getDb(CONFIGURED_DB_PATH);
 
       const session = db
@@ -276,10 +291,10 @@ function registerGetSession(server: McpServer) {
           `SELECT session_id, source, project, cwd, title, model, created_at, updated_at
 					 FROM sessions WHERE session_id = ?`,
         )
-        .get(session_id);
+        .get(sessionId);
 
       if (!session) {
-        return { content: [{ type: "text", text: `Session ${session_id} not found.` }] };
+        return textResult(`Session ${sessionId} not found.`);
       }
 
       const totalMessages = (
@@ -289,7 +304,7 @@ function registerGetSession(server: McpServer) {
 						 JOIN sessions s ON m.file_path = s.file_path
 						 WHERE s.session_id = ?`,
           )
-          .get(session_id) ?? { n: 0 }
+          .get(sessionId) ?? { n: 0 }
       ).n;
 
       const blocks = db
@@ -309,14 +324,14 @@ function registerGetSession(server: McpServer) {
 					   ON cb.file_path = m.file_path AND cb.message_id = m.id
 					 ORDER BY m.rowid, cb.block_index`,
         )
-        .all(session_id, limit, offset);
+        .all(sessionId, limit, offset);
 
       const { messages, order } = groupBlocksByMessage(blocks);
       const pageEnd = offset + order.length;
       const hasMore = pageEnd < totalMessages;
 
       const lines: string[] = [
-        `# ${session.title ?? session_id}`,
+        `# ${session.title ?? sessionId}`,
         `Source: ${session.source} | Project: ${session.project}`,
         session.cwd ? `CWD: ${session.cwd}` : "",
         session.created_at ? `Date: ${session.created_at}` : "",
@@ -334,17 +349,15 @@ function registerGetSession(server: McpServer) {
         lines.push("");
       }
 
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return textResult(lines.join("\n"));
     },
-  );
-}
+  },
 
-function registerSchema(server: McpServer) {
-  server.tool(
-    "schema",
-    "Return the exact column names for all devlog tables. Call this before writing a query tool call to avoid column name errors.",
-    {},
-    () => {
+  schema: {
+    description:
+      "Return the exact column names for all devlog tables. Call this before writing a query tool call to avoid column name errors.",
+    schema: v.object({}),
+    handler() {
       const db = getDb(CONFIGURED_DB_PATH);
       const tables = [
         "sessions",
@@ -363,24 +376,47 @@ function registerSchema(server: McpServer) {
           .all(table);
         lines.push(`${table}: ${cols.map((c) => `${c.name} (${c.type})`).join(", ")}`);
       }
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return textResult(lines.join("\n"));
     },
-  );
-}
+  },
 
-function registerQuery(server: McpServer) {
-  server.tool(
-    "query",
-    "Execute a raw SQL SELECT query against the devlog database. The DB is read-only so only SELECT statements work. Tables: sessions, messages, content_blocks, messages_fts.",
-    {
-      sql: z.string().describe("SQL SELECT query to execute"),
-    },
-    async ({ sql }) => {
+  query: {
+    description:
+      "Execute a raw SQL SELECT query against the devlog database. The DB is read-only so only SELECT statements work. Tables: sessions, messages, content_blocks, messages_fts.",
+    schema: v.object({
+      sql: v.pipe(v.string(), v.description("SQL SELECT query to execute")),
+    }),
+    async handler({ sql }: { sql: string }) {
       const db = getReadonlyDb(CONFIGURED_DB_PATH);
       const rows = db.query(sql).all();
       const text = rows.length === 0 ? "(no rows)" : JSON.stringify(rows, undefined, 2);
-      return { content: [{ type: "text", text }] };
+      return textResult(text);
     },
+  },
+} as const;
+
+// --- tool registration ----------------------------------------------------
+
+// Pairs each valibot schema with its handler at the type level: the handler's
+// args must be exactly v.InferOutput of the schema. `toStandardJsonSchema`
+// implements the SDK's StandardSchemaWithJSON, so the SDK derives the same
+// arg type on its side and no cast is needed.
+function registerTool<S extends v.ObjectSchema<v.ObjectEntries, undefined>>(
+  server: McpServer,
+  name: string,
+  def: {
+    description: string;
+    schema: S;
+    handler: (args: v.InferOutput<S>) => CallToolResult | Promise<CallToolResult>;
+  },
+): void {
+  server.registerTool(
+    name,
+    {
+      description: def.description,
+      inputSchema: toStandardJsonSchema(def.schema),
+    },
+    def.handler,
   );
 }
 
@@ -390,11 +426,11 @@ export function createServer(): McpServer {
     { instructions: INSTRUCTIONS },
   );
 
-  registerSearch(server);
-  registerListSessions(server);
-  registerGetSession(server);
-  registerSchema(server);
-  registerQuery(server);
+  registerTool(server, "search", TOOLS.search);
+  registerTool(server, "list_sessions", TOOLS.list_sessions);
+  registerTool(server, "get_session", TOOLS.get_session);
+  registerTool(server, "schema", TOOLS.schema);
+  registerTool(server, "query", TOOLS.query);
 
   return server;
 }

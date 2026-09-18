@@ -44,7 +44,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   { regex: /sk-or-[A-Za-z0-9_-]{20,}/g, replacement: "[REDACTED:openrouter-key]" },
   { regex: /sk-[A-Za-z0-9]{48}/g, replacement: "[REDACTED:openai-key]" },
   { regex: /gsk_[A-Za-z0-9]{20,}/g, replacement: "[REDACTED:groq-key]" },
-  { regex: /gh[pousr]_[A-Za-z0-9]{30,}/g, replacement: "[REDACTED:github-token]" },
+  { regex: /gh[pousr]_[A-Za-z0-9_\-+]{20,}/g, replacement: "[REDACTED:github-token]" },
   { regex: /github_pat_[A-Za-z0-9_]{20,}/g, replacement: "[REDACTED:github-token]" },
   { regex: /hf_[A-Za-z0-9]{20,}/g, replacement: "[REDACTED:huggingface-token]" },
   { regex: /xai-[A-Za-z0-9_-]{20,}/g, replacement: "[REDACTED:xai-key]" },

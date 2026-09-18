@@ -109,6 +109,30 @@ describe("redaction", () => {
     });
   });
 
+  test("redacts github user-to-server (ghu_) tokens containing separators", () => {
+    // ghu_ secrets include _ and - characters; the old regex only matched pure alphanumerics.
+    const ghu = "ghu_AbCd1Ef2Gh3Ij4Kl5Mn6Op7Qr8St9Uv0Wx1Yz2-3Ab_CdEf";
+    const original = makeParseResult(ghu);
+
+    const redacted = redactForIndexing(original);
+    const redactedText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
+
+    expect(redactedText).toBe("[REDACTED:github-token]");
+    expect(redactedText).not.toContain(ghu);
+  });
+
+  test("redacts partial/truncated github tokens (shorter than 30 chars)", () => {
+    // Truncated or partial token values can be shorter than the old 30-char floor.
+    const partial = "ghs_ScopedToken1234567890-ABCDE";
+    const original = makeParseResult(partial);
+
+    const redacted = redactForIndexing(original);
+    const redactedText = (at(at(redacted.messages, 0).content, 0) as TextContentBlock).text;
+
+    expect(redactedText).toBe("[REDACTED:github-token]");
+    expect(redactedText).not.toContain(partial);
+  });
+
   test("redacts github fine-grained PAT tokens", () => {
     const githubPat =
       "github_pat_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_abc";

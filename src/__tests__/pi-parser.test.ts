@@ -394,4 +394,22 @@ describe("Pi parser", () => {
     // The unrecognized-role message is surfaced as a warning, not as content.
     expect(outcome.result?.messages.some((m) => m.id === "x1")).toBe(false);
   });
+
+  test("skips system role messages and usage records without warnings", async () => {
+    const filePath = path.join(FIXTURES_DIR, "pi-system-role.jsonl");
+    const outcome = await parsePiSession(filePath, "test-project");
+    const result = expectParsed(outcome);
+
+    expect(outcome.warnings).toEqual([]);
+
+    // The system message contributes no content, and the session title still
+    // comes from the first user message rather than the system preamble.
+    expect(result.messages.map((m) => m.id)).toEqual(["u0000001", "a0000001"]);
+    expect(result.meta.title).toBe("first fart question");
+    expect(
+      result.messages.some((m) =>
+        m.content.some((b) => b.type === "text" && b.text.includes("fart wrangler")),
+      ),
+    ).toBe(false);
+  });
 });

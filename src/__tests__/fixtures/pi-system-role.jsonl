@@ -1,0 +1,5 @@
+{"type":"session","version":3,"id":"pi-system-role","timestamp":"2026-03-15T20:09:38.000Z","cwd":"/home/user/project"}
+{"type":"message","id":"sys00001","parentId":null,"timestamp":"2026-03-15T20:09:39.000Z","message":{"role":"system","content":"","sections":{"preamble":"You are a fart wrangler.","tools":"<tools>fart tools only</tools>"}}}
+{"type":"usage","id":"usg00001","parentId":"sys00001","timestamp":"2026-03-15T20:09:40.000Z","kind":"cache_warm","provider":"fart-labs","model":"fart-model","usage":{"input":2,"output":1,"cacheRead":144,"totalTokens":147}}
+{"type":"message","id":"u0000001","parentId":"usg00001","timestamp":"2026-03-15T20:10:00.000Z","message":{"role":"user","content":[{"type":"text","text":"first fart question"}],"timestamp":1773605400000}}
+{"type":"message","id":"a0000001","parentId":"u0000001","timestamp":"2026-03-15T20:10:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"fart answer"}],"model":"fart-model","timestamp":1773605405000}}

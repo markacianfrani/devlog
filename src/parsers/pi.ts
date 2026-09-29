@@ -82,7 +82,20 @@ interface PiGenericEntry {
   fromId?: string;
 }
 
-const SKIP_TYPES = new Set(["thinking_level_change"]);
+/**
+ * State-only records with no conversation content: `thinking_level_change`
+ * is a settings blip and `usage` carries usage notices (e.g. cache_warm
+ * costs). Both are skipped silently.
+ */
+const SKIP_TYPES = new Set(["thinking_level_change", "usage"]);
+
+/**
+ * pi persists the assembled system prompt as a `system` role message with
+ * empty content (the prompt itself lives in `sections`). It is per-session
+ * boilerplate rather than conversation, so it is skipped silently like the
+ * state-only record types above.
+ */
+const SKIP_ROLES = new Set(["system"]);
 const KNOWN_TYPES = new Set([
   "session",
   "message",
@@ -548,8 +561,9 @@ function buildBashExecutionMessage(
  * Handles `message` records once the top-level dispatcher has confirmed the
  * type. bashExecution is a self-contained event (command + output) with no
  * content blocks, so it lives outside the user/assistant/toolResult union.
- * Any other unrecognized role is a real record we'd otherwise drop silently —
- * warn so novel pi roles surface instead of vanishing.
+ * The system role is skipped (see SKIP_ROLES). Any other unrecognized role is
+ * a real record we'd otherwise drop silently — warn so novel pi roles surface
+ * instead of vanishing.
  */
 function buildPiMessageEntry(
   entry: PiMessageEntry,
@@ -558,6 +572,10 @@ function buildPiMessageEntry(
 ): { malformed: boolean; message?: CleanMessage } {
   if (entry.message?.role === "bashExecution") {
     return { malformed: false, message: buildBashExecutionMessage(entry, state.sessionId) };
+  }
+
+  if (entry.message?.role && SKIP_ROLES.has(entry.message.role)) {
+    return { malformed: false };
   }
 
   if (!isPiMessageRole(entry.message?.role)) {

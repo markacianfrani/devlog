@@ -1,0 +1,15 @@
+{"type":"session","version":3,"id":"pi-context-edits","timestamp":"2026-03-15T20:09:38.000Z","cwd":"/home/user/project"}
+{"type":"model_change","id":"m0000001","parentId":null,"timestamp":"2026-03-15T20:09:38.000Z","provider":"fart-labs","modelId":"fart-model"}
+{"type":"message","id":"u0000001","parentId":"m0000001","timestamp":"2026-03-15T20:10:00.000Z","message":{"role":"user","content":[{"type":"text","text":"first fart question"}],"timestamp":1773605400000}}
+{"type":"message","id":"u0000002","parentId":"u0000001","timestamp":"2026-03-15T20:10:02.000Z","message":{"role":"user","content":[{"type":"text","text":"fart slated for omission"}],"timestamp":1773605402000}}
+{"type":"message","id":"u0000003","parentId":"u0000002","timestamp":"2026-03-15T20:10:03.000Z","message":{"role":"user","content":[{"type":"text","text":"fart replaced then omitted"}],"timestamp":1773605403000}}
+{"type":"message","id":"a0000001","parentId":"u0000003","timestamp":"2026-03-15T20:10:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"stale fart answer"}],"model":"fart-model","timestamp":1773605405000}}
+{"type":"message","id":"t0000001","parentId":"a0000001","timestamp":"2026-03-15T20:10:06.000Z","message":{"role":"toolResult","toolCallId":"call_1","toolName":"read","content":[{"type":"text","text":"raw fart output"}],"isError":false,"timestamp":1773605406000}}
+{"type":"custom_message","id":"cm000001","parentId":"t0000001","timestamp":"2026-03-15T20:10:07.000Z","customType":"fart-note","content":"custom fart before edit","display":true}
+{"type":"context_edit","id":"e0000001","parentId":"cm000001","timestamp":"2026-03-15T20:10:10.000Z","targetId":"u0000002","replacement":null}
+{"type":"context_edit","id":"e0000002","parentId":"e0000001","timestamp":"2026-03-15T20:10:11.000Z","targetId":"a0000001","replacement":{"content":[{"type":"text","text":"edited fart answer"}]}}
+{"type":"context_edit","id":"e0000003","parentId":"e0000002","timestamp":"2026-03-15T20:10:12.000Z","targetId":"t0000001","replacement":{"content":"edited fart output"}}
+{"type":"context_edit","id":"e0000004","parentId":"e0000003","timestamp":"2026-03-15T20:10:13.000Z","targetId":"cm000001","replacement":{"content":[{"type":"text","text":"edited custom fart"}]}}
+{"type":"context_edit","id":"e0000005","parentId":"e0000004","timestamp":"2026-03-15T20:10:14.000Z","targetId":"u0000003","replacement":{"content":"first edit fart"}}
+{"type":"context_edit","id":"e0000006","parentId":"e0000005","timestamp":"2026-03-15T20:10:15.000Z","targetId":"u0000003","replacement":null}
+{"type":"context_edit","id":"e0000007","parentId":"e0000006","timestamp":"2026-03-15T20:10:16.000Z","targetId":"missing-target","replacement":null}

@@ -1,0 +1,8 @@
+{"type":"session","version":3,"id":"pi-context-edit-invalid","timestamp":"2026-03-15T20:09:38.000Z","cwd":"/home/user/project"}
+{"type":"message","id":"u0000001","parentId":null,"timestamp":"2026-03-15T20:10:00.000Z","message":{"role":"user","content":[{"type":"text","text":"fart question"}],"timestamp":1773605400000}}
+{"type":"message","id":"a0000001","parentId":"u0000001","timestamp":"2026-03-15T20:10:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"fart answer"}],"model":"fart-model","timestamp":1773605402000}}
+{"type":"context_edit","id":"e0000001","parentId":"a0000001","timestamp":"2026-03-15T20:10:04.000Z","targetId":"u0000001","replacement":42}
+{"type":"context_edit","id":"e0000002","parentId":"e0000001","timestamp":"2026-03-15T20:10:05.000Z","targetId":"a0000001"}
+{"type":"context_edit","id":"e0000003","parentId":"e0000002","timestamp":"2026-03-15T20:10:06.000Z","replacement":null}
+{"type":"message","id":"u0000002","parentId":"e0000003","timestamp":"2026-03-15T20:10:07.000Z","message":{"role":"user","content":"","timestamp":1773605407000}}
+{"type":"context_edit","id":"e0000004","parentId":"u0000002","timestamp":"2026-03-15T20:10:08.000Z","targetId":"u0000002","replacement":null}

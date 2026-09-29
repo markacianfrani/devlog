@@ -412,4 +412,77 @@ describe("Pi parser", () => {
       ),
     ).toBe(false);
   });
+
+  test("applies context_edit omissions and replacements", async () => {
+    const filePath = path.join(FIXTURES_DIR, "pi-context-edits.jsonl");
+    const outcome = await parsePiSession(filePath, "test-project");
+    const result = expectParsed(outcome);
+
+    expect(outcome.warnings).toEqual([]);
+
+    // u2 is omitted outright; u3's replacement is superseded by a later null
+    // edit (last edit wins); the unknown target is a no-op.
+    expect(result.messages.map((m) => m.id)).toEqual([
+      "u0000001",
+      "a0000001",
+      "t0000001",
+      "cm000001",
+    ]);
+
+    const untouched = result.messages.find((m) => m.id === "u0000001");
+    expect((at(untouched?.content ?? [], 0) as TextContentBlock).text).toBe("first fart question");
+
+    const assistant = result.messages.find((m) => m.id === "a0000001");
+    expect(assistant?.content).toHaveLength(1);
+    expect((at(assistant?.content ?? [], 0) as TextContentBlock).text).toBe("edited fart answer");
+
+    const toolResult = result.messages.find((m) => m.id === "t0000001");
+    expect(toolResult?.content).toHaveLength(1);
+    const toolResultBlock = at(toolResult?.content ?? [], 0) as ToolResultContentBlock;
+    expect(toolResultBlock.type).toBe("tool_result");
+    expect(toolResultBlock.toolOutput).toBe("edited fart output");
+    expect(toolResultBlock.toolUseId).toBe("call_1");
+
+    const custom = result.messages.find((m) => m.id === "cm000001");
+    expect(custom?.content).toHaveLength(1);
+    expect((at(custom?.content ?? [], 0) as TextContentBlock).text).toBe("edited custom fart");
+  });
+
+  test("keeps original content and warns on malformed context_edit records", async () => {
+    const filePath = path.join(FIXTURES_DIR, "pi-context-edit-invalid.jsonl");
+    const outcome = await parsePiSession(filePath, "test-project");
+    const result = expectParsed(outcome);
+
+    // targetId warnings fire during the line pass; replacement warnings
+    // fire when edits are applied after it, so assert order-independent.
+    const byLine = [...outcome.warnings].sort((a, b) => (a.lineNumber ?? 0) - (b.lineNumber ?? 0));
+    expect(byLine).toEqual([
+      expect.objectContaining({
+        kind: "missing-field",
+        message: expect.stringContaining("replacement must be null or contain string/array"),
+        lineNumber: 4,
+        count: 1,
+      }),
+      expect.objectContaining({
+        kind: "missing-field",
+        message: expect.stringContaining("missing replacement"),
+        lineNumber: 5,
+        count: 1,
+      }),
+      expect.objectContaining({
+        kind: "missing-field",
+        message: expect.stringContaining("missing targetId"),
+        lineNumber: 6,
+        count: 1,
+      }),
+    ]);
+
+    // Malformed edits never mutate their targets, and the empty user message
+    // that was never stored is a silent no-op.
+    expect(result.messages.map((m) => m.id)).toEqual(["u0000001", "a0000001"]);
+    expect((at(result.messages[0]?.content ?? [], 0) as TextContentBlock).text).toBe(
+      "fart question",
+    );
+    expect((at(result.messages[1]?.content ?? [], 0) as TextContentBlock).text).toBe("fart answer");
+  });
 });

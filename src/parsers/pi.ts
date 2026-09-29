@@ -10,6 +10,7 @@ import {
   createAssistantMessage,
   createUserMessage,
   finalizeParseResult,
+  isUserContentBlock,
   type CleanMessage,
   type ContentBlock,
   type ImageContentBlock,
@@ -80,6 +81,8 @@ interface PiGenericEntry {
   label?: string;
   targetId?: string;
   fromId?: string;
+  /** context_edit payload: null omits the target, { content } replaces its content. */
+  replacement?: unknown;
 }
 
 /**
@@ -117,6 +120,32 @@ interface SessionState {
   updatedAt?: string;
   model?: string;
   parentSessionId?: string;
+}
+
+/** How a stored message's replacement content must be re-parsed for context edits. */
+type PiEditKind = "user" | "assistant" | "toolResult";
+
+/** Where a context-editable message landed, and how to re-parse its replacement. */
+interface EditableMessageTarget {
+  kind: PiEditKind;
+  toolCallId?: string;
+  index: number;
+}
+
+interface RecordedContextEdit {
+  entry: PiGenericEntry;
+  lineNumber: number;
+}
+
+interface PiEntryOutcome {
+  malformed: boolean;
+  message?: CleanMessage;
+  /** Present when the message's content can be replaced by a later context_edit. */
+  editKind?: PiEditKind;
+  /** toolResult messages keep their toolCallId so replacements stay linked. */
+  toolCallId?: string;
+  /** A context_edit record, applied after the full pass. */
+  contextEdit?: { targetId: string; entry: PiGenericEntry };
 }
 
 function isPiGenericEntry(value: unknown): value is PiGenericEntry {
@@ -569,7 +598,7 @@ function buildPiMessageEntry(
   entry: PiMessageEntry,
   state: SessionState,
   lineContext: ParseLineContext,
-): { malformed: boolean; message?: CleanMessage } {
+): PiEntryOutcome {
   if (entry.message?.role === "bashExecution") {
     return { malformed: false, message: buildBashExecutionMessage(entry, state.sessionId) };
   }
@@ -590,14 +619,19 @@ function buildPiMessageEntry(
     return { malformed: false };
   }
 
-  return { malformed: false, message: buildPiMessage(entry, state.sessionId, parsedContent) };
+  return {
+    malformed: false,
+    message: buildPiMessage(entry, state.sessionId, parsedContent),
+    editKind: entry.message.role,
+    toolCallId: entry.message.toolCallId,
+  };
 }
 
 function parsePiEntry(
   line: string,
   state: SessionState,
   lineContext: ParseLineContext,
-): { malformed: boolean; message?: CleanMessage } {
+): PiEntryOutcome {
   const entry = parsePiJsonLine(line);
   if (!entry) {
     return { malformed: true };
@@ -618,7 +652,13 @@ function parsePiEntry(
   }
 
   if (entry.type === "custom_message") {
-    return { malformed: false, message: buildCustomMessage(entry, state.sessionId, lineContext) };
+    return {
+      malformed: false,
+      message: buildCustomMessage(entry, state.sessionId, lineContext),
+      // custom_message content is replaceable via context_edit (text/image
+      // blocks), so it re-parses like user content when edited.
+      editKind: "user",
+    };
   }
 
   if (entry.type === "custom") {
@@ -636,6 +676,15 @@ function parsePiEntry(
     return { malformed: false };
   }
 
+  if (entry.type === "context_edit") {
+    if (typeof entry.targetId !== "string") {
+      lineContext.missingField("context_edit record missing targetId");
+      return { malformed: false };
+    }
+    updateStateFromEntry(state, entry, []);
+    return { malformed: false, contextEdit: { targetId: entry.targetId, entry } };
+  }
+
   if (!isPiMessageEntry(entry)) {
     if (entry.type && !KNOWN_TYPES.has(entry.type)) {
       lineContext.unknownType(entry.type, "record");
@@ -646,12 +695,119 @@ function parsePiEntry(
   return buildPiMessageEntry(entry, state, lineContext);
 }
 
+/**
+ * Parses a context_edit replacement payload for a known target.
+ *
+ * Returns undefined (after warning) when the envelope is malformed — the
+ * original message content is kept in that case. `replacement: null` is
+ * handled by the caller before this runs.
+ */
+function parseContextEditReplacement(
+  replacement: unknown,
+  target: EditableMessageTarget,
+  lineContext: ParseLineContext,
+): ContentBlock[] | undefined {
+  if (replacement === undefined) {
+    lineContext.missingField("context_edit record missing replacement");
+    return undefined;
+  }
+
+  if (
+    !isObjectRecord(replacement) ||
+    (typeof replacement["content"] !== "string" && !Array.isArray(replacement["content"]))
+  ) {
+    lineContext.missingField(
+      "context_edit replacement must be null or contain string/array content",
+    );
+    return undefined;
+  }
+
+  const content = replacement["content"] as string | PiRawContentBlock[];
+  if (target.kind === "toolResult") {
+    return buildPiToolResultContent(content, target.toolCallId, lineContext);
+  }
+
+  const parsed = parsePiContent(content, lineContext);
+  return target.kind === "user" ? parsed.filter(isUserContentBlock) : parsed;
+}
+
+/**
+ * Applies pi `context_edit` records to the parsed messages.
+ *
+ * pi sessions are append-only: an edit is a separate record referencing an
+ * earlier entry by id. `replacement: null` omits the target from model
+ * context; `{ content }` replaces only its content. This mirrors pi's own
+ * projection semantics:
+ *
+ * - the last edit recorded for a target wins, so edits are collected first
+ *   and applied after the full pass — which also tolerates edits appearing
+ *   anywhere in the file;
+ * - edits targeting entries devlog never stored are no-ops;
+ * - replacement content is re-parsed with the same block parsers used for
+ *   the original message (string toolResult/assistant content becomes a
+ *   text block, just like pi normalizes it).
+ *
+ * A replacement that parses to zero blocks removes the message, matching
+ * how the parser drops empty messages everywhere else.
+ */
+function applyContextEdits(
+  messages: CleanMessage[],
+  editTargets: ReadonlyMap<string, EditableMessageTarget>,
+  contextEdits: ReadonlyMap<string, RecordedContextEdit>,
+  warnings: ParseWarningCollector,
+): CleanMessage[] {
+  if (contextEdits.size === 0) {
+    return messages;
+  }
+
+  const omittedIndexes = new Set<number>();
+  const replacements = new Map<number, ContentBlock[]>();
+
+  for (const [targetId, edit] of contextEdits) {
+    const target = editTargets.get(targetId);
+    if (!target) {
+      continue;
+    }
+
+    if (edit.entry.replacement === null) {
+      omittedIndexes.add(target.index);
+      continue;
+    }
+
+    const lineContext = warnings.line(edit.lineNumber);
+    const content = parseContextEditReplacement(edit.entry.replacement, target, lineContext);
+    if (content === undefined) {
+      continue;
+    }
+    if (content.length === 0) {
+      omittedIndexes.add(target.index);
+      continue;
+    }
+    replacements.set(target.index, content);
+  }
+
+  if (omittedIndexes.size === 0 && replacements.size === 0) {
+    return messages;
+  }
+
+  return messages
+    .map((message, index) => {
+      const content = replacements.get(index);
+      // content was parsed/filtered for this message's kind, so the block
+      // union matches its role.
+      return content === undefined ? message : ({ ...message, content } as CleanMessage);
+    })
+    .filter((_, index) => !omittedIndexes.has(index));
+}
+
 export async function parsePiSession(jsonlPath: string, project: string): Promise<ParseOutcome> {
   const lines = readJsonlLines(jsonlPath);
 
   const messages: CleanMessage[] = [];
   const state: SessionState = {};
   const warnings = new ParseWarningCollector("pi-parser", jsonlPath);
+  const editTargets = new Map<string, EditableMessageTarget>();
+  const contextEdits = new Map<string, RecordedContextEdit>();
   let malformedLines = 0;
 
   for (const [index, line] of lines.entries()) {
@@ -662,10 +818,24 @@ export async function parsePiSession(jsonlPath: string, project: string): Promis
       continue;
     }
     if (result.message) {
+      if (result.editKind && result.message.id) {
+        editTargets.set(result.message.id, {
+          kind: result.editKind,
+          toolCallId: result.toolCallId,
+          index: messages.length,
+        });
+      }
       messages.push(result.message);
+    }
+    if (result.contextEdit) {
+      contextEdits.set(result.contextEdit.targetId, {
+        entry: result.contextEdit.entry,
+        lineNumber: index + 1,
+      });
     }
   }
 
+  const editedMessages = applyContextEdits(messages, editTargets, contextEdits, warnings);
   warnings.malformedLines(malformedLines);
 
   const result = finalizeParseResult({
@@ -680,7 +850,7 @@ export async function parsePiSession(jsonlPath: string, project: string): Promis
       updatedAt: state.updatedAt,
       parentSessionId: state.parentSessionId,
     },
-    messages,
+    messages: editedMessages,
     prLinks: [],
     artifactLinks: [],
   });

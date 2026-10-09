@@ -5,13 +5,65 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { closeDb, getDb } from "../db.ts";
+import { closeDb, getDb, SCHEMA_VERSION } from "../db.ts";
 import { indexAll, indexSession } from "../indexer.ts";
 import type { ParseWarning } from "../parsers/types.ts";
 import type { IndexRedactionContext } from "../redaction.ts";
 import { at } from "./archive-fixtures.ts";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures");
+
+const claudeUserLine = (sessionId: string, uuid: string, text: string, ts: string) =>
+  JSON.stringify({
+    type: "user",
+    sessionId,
+    uuid,
+    parentUuid: null,
+    timestamp: ts,
+    cwd: "/home/user/project",
+    message: { role: "user", content: text },
+  });
+
+interface ClaudeAssistantLine {
+  sessionId: string;
+  uuid: string;
+  messageId: string;
+  requestId?: string;
+  isSidechain?: boolean;
+  text: string;
+  ts: string;
+  usage: Record<string, number>;
+}
+
+const claudeAssistantLine = (line: ClaudeAssistantLine) =>
+  JSON.stringify({
+    type: "assistant",
+    sessionId: line.sessionId,
+    uuid: line.uuid,
+    parentUuid: null,
+    timestamp: line.ts,
+    cwd: "/home/user/project",
+    ...(line.requestId && { requestId: line.requestId }),
+    ...(line.isSidechain && { isSidechain: true }),
+    message: {
+      id: line.messageId,
+      role: "assistant",
+      content: [{ type: "text", text: line.text }],
+      usage: line.usage,
+    },
+  });
+
+const usageTotals = (db: ReturnType<typeof getDb>) =>
+  db
+    .query<{ n: number; tokens_in: number | null }, []>(
+      "SELECT COUNT(*) as n, SUM(tokens_in) as tokens_in FROM message_usage WHERE role = 'assistant'",
+    )
+    .get();
+
+const messageCountFor = (db: ReturnType<typeof getDb>, filePath: string) =>
+  db
+    .query<{ n: number }, [string]>("SELECT COUNT(*) as n FROM messages WHERE file_path = ?")
+    .get(filePath)?.n;
 
 async function withEnv<T>(
   name: string,
@@ -615,6 +667,140 @@ describe("indexer", () => {
     expect(persistedText).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
   });
 
+  test("a fork keeps its full transcript, but replayed responses are counted once", async () => {
+    const db = getDb(dbPath);
+    const parentPath = path.join(tempDir, "parent.jsonl");
+    const forkPath = path.join(tempDir, "fork.jsonl");
+    const toot = {
+      uuid: "a1",
+      messageId: "msg_toot",
+      requestId: "req_toot",
+      text: "toot",
+      ts: "2026-01-20T10:00:01.000Z",
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    fs.writeFileSync(
+      parentPath,
+      [
+        claudeUserLine("sess-fart", "u1", "pull my finger", "2026-01-20T10:00:00.000Z"),
+        claudeAssistantLine({ ...toot, sessionId: "sess-fart" }),
+      ].join("\n"),
+    );
+
+    // A fork replays the parent's records (same uuids, message id and request id)
+    // before adding its own turns.
+    fs.writeFileSync(
+      forkPath,
+      [
+        claudeUserLine("sess-fart", "u1", "pull my finger", "2026-01-20T10:00:00.000Z"),
+        claudeAssistantLine({ ...toot, sessionId: "sess-fart" }),
+        claudeUserLine("sess-fart", "u2", "again", "2026-01-20T10:00:02.000Z"),
+        claudeAssistantLine({
+          sessionId: "sess-fart",
+          uuid: "a2",
+          messageId: "msg_pfffft",
+          requestId: "req_pfffft",
+          text: "pfffft",
+          ts: "2026-01-20T10:00:03.000Z",
+          usage: { input_tokens: 200, output_tokens: 10 },
+        }),
+      ].join("\n"),
+    );
+
+    // Index the fork first: which file is seen first must not matter.
+    await indexSession(forkPath, "claude", "test-project", db);
+    await indexSession(parentPath, "claude", "test-project", db);
+
+    expect(messageCountFor(db, parentPath)).toBe(2);
+    expect(messageCountFor(db, forkPath)).toBe(4);
+    expect(usageTotals(db)).toEqual({ n: 2, tokens_in: 300 });
+  });
+
+  test("reindexing a fork leaves its parent's search rows intact", async () => {
+    const db = getDb(dbPath);
+    const parentPath = path.join(tempDir, "parent.jsonl");
+    const forkPath = path.join(tempDir, "fork.jsonl");
+    const opening = claudeUserLine(
+      "sess-fart",
+      "u1",
+      "whoopee cushion",
+      "2026-01-20T10:00:00.000Z",
+    );
+    fs.writeFileSync(parentPath, opening);
+    fs.writeFileSync(forkPath, opening);
+
+    await indexSession(parentPath, "claude", "test-project", db);
+    await indexSession(forkPath, "claude", "test-project", db);
+
+    // The fork shares the parent's session id; changing it forces a reindex.
+    fs.appendFileSync(
+      forkPath,
+      "\n" + claudeUserLine("sess-fart", "u2", "encore", "2026-01-20T10:00:01.000Z"),
+    );
+    const future = new Date(Date.now() + 10_000);
+    fs.utimesSync(forkPath, future, future);
+    await indexSession(forkPath, "claude", "test-project", db);
+
+    const hits = db
+      .query<{ file_path: string }, [string]>(
+        "SELECT file_path FROM messages_fts WHERE messages_fts MATCH ? ORDER BY file_path",
+      )
+      .all("whoopee");
+    expect(hits.map((hit) => hit.file_path).sort()).toEqual([forkPath, parentPath].sort());
+  });
+
+  test("a sidechain replay under a new request id is counted once, as the main-chain copy", async () => {
+    const db = getDb(dbPath);
+    const mainPath = path.join(tempDir, "main.jsonl");
+    const sidechainPath = path.join(tempDir, "subagents", "agent-fart.jsonl");
+    fs.mkdirSync(path.dirname(sidechainPath));
+    const toot = {
+      sessionId: "sess-fart",
+      uuid: "a1",
+      messageId: "msg_toot",
+      text: "toot",
+      ts: "2026-01-20T10:00:01.000Z",
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    fs.writeFileSync(mainPath, claudeAssistantLine({ ...toot, requestId: "req_main" }));
+    fs.writeFileSync(
+      sidechainPath,
+      claudeAssistantLine({ ...toot, uuid: "a1-btw", requestId: "req_btw", isSidechain: true }),
+    );
+
+    await indexSession(sidechainPath, "claude", "test-project", db);
+    await indexSession(mainPath, "claude", "test-project", db);
+
+    const survivors = db
+      .query<{ file_path: string; is_sidechain: number }, []>(
+        "SELECT file_path, is_sidechain FROM message_usage WHERE role = 'assistant'",
+      )
+      .all();
+    expect(survivors).toEqual([{ file_path: mainPath, is_sidechain: 0 }]);
+  });
+
+  test("pi messages that share an entry id across sessions are each counted", async () => {
+    const db = getDb(dbPath);
+    const fixture = fs.readFileSync(path.join(FIXTURES_DIR, "pi-simple.jsonl"), "utf8");
+    const firstPath = path.join(tempDir, "pi-fart-1.jsonl");
+    const secondPath = path.join(tempDir, "pi-fart-2.jsonl");
+    fs.writeFileSync(firstPath, fixture);
+    // Pi entry ids are only unique within a session; a second session reusing
+    // them is a different conversation.
+    fs.writeFileSync(secondPath, fixture.replace('"id":"pi-session-1"', '"id":"pi-session-2"'));
+
+    await indexSession(firstPath, "pi", "test-project", db);
+    await indexSession(secondPath, "pi", "test-project", db);
+
+    const perFile = messageCountFor(db, firstPath);
+    expect(perFile).toBeGreaterThan(0);
+    expect(messageCountFor(db, secondPath)).toBe(perFile);
+    const counted = db.query<{ n: number }, []>("SELECT COUNT(*) as n FROM message_usage").get()?.n;
+    expect(counted).toBe((perFile ?? 0) * 2);
+  });
+
   test("schema version bump drops and rebuilds the cache, reindexing without touching archives", async () => {
     const dbPath = path.join(tempDir, "index.db");
     const fixturePath = path.join(FIXTURES_DIR, "pi-custom-entries.jsonl");
@@ -636,13 +822,13 @@ describe("indexer", () => {
     expect(firstCount?.count).toBeGreaterThan(0);
     expect(
       db.query<{ version: number }, []>("SELECT version FROM schema_version").get()?.version,
-    ).toBe(15);
+    ).toBe(SCHEMA_VERSION);
     closeDb();
 
     // Simulate a stale cache pinned to the previous index version.
     const stale = new Database(dbPath);
     stale.exec("PRAGMA foreign_keys = ON");
-    stale.run("UPDATE schema_version SET version = 14");
+    stale.run("UPDATE schema_version SET version = ?", [SCHEMA_VERSION - 1]);
     stale.close();
 
     // Reopen: the version mismatch drops and recreates the cache tables through
@@ -650,7 +836,7 @@ describe("indexer", () => {
     db = getDb(dbPath);
     expect(
       db.query<{ version: number }, []>("SELECT version FROM schema_version").get()?.version,
-    ).toBe(15);
+    ).toBe(SCHEMA_VERSION);
     expect(
       db.query<{ count: number }, []>("SELECT COUNT(*) as count FROM messages").get()?.count,
     ).toBe(0);

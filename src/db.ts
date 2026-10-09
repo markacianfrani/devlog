@@ -44,6 +44,9 @@ export interface MessageRow {
   cache_write_tokens: number | null;
   reasoning_tokens: number | null;
   agent_id: string | null;
+  api_message_id: string | null;
+  request_id: string | null;
+  is_sidechain: 0 | 1;
 }
 
 export interface ContentBlockRow {
@@ -84,7 +87,7 @@ export interface ArtifactLinkRow {
   artifact_url: string;
   timestamp: string | null;
 }
-const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;
@@ -135,6 +138,10 @@ CREATE TABLE IF NOT EXISTS session_worktrees (
 CREATE INDEX IF NOT EXISTS idx_session_worktrees_original_cwd ON session_worktrees(original_cwd);
 
 -- Messages table (references sessions by file_path)
+-- Every file keeps its own copy of a message, even when a fork or subagent
+-- sidechain replays one from another file. api_message_id/request_id/is_sidechain
+-- identify the API response behind a Claude assistant message; message_usage
+-- (below) uses them to count each response's tokens once.
 CREATE TABLE IF NOT EXISTS messages (
 	id TEXT NOT NULL,
 	file_path TEXT NOT NULL,
@@ -148,12 +155,64 @@ CREATE TABLE IF NOT EXISTS messages (
 	cache_write_tokens INTEGER,
 	reasoning_tokens INTEGER,
 	agent_id TEXT,
+	api_message_id TEXT,
+	request_id TEXT,
+	is_sidechain INTEGER NOT NULL DEFAULT 0 CHECK(is_sidechain IN (0, 1)),
 	PRIMARY KEY (file_path, id),
 	FOREIGN KEY (file_path) REFERENCES sessions(file_path) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_file_path ON messages(file_path);
 CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
+CREATE INDEX IF NOT EXISTS idx_messages_api_message_id ON messages(api_message_id);
+
+-- One row per billed API response: sum tokens over this view, not messages.
+-- Ports ccusage's Claude dedupe (rust/adapters/claude/src/lib.rs):
+--   1. Exact: api_message_id + request_id match across sessions. Without a
+--      request_id the match is scoped to the session and timestamp.
+--   2. Sidechain replay: within a session, a sidechain copy of a response (e.g.
+--      /btw replaying parent turns under a new request_id) matches on
+--      api_message_id plus timestamp, or on api_message_id alone when neither
+--      copy has a request_id.
+-- The survivor is the main-chain copy, then the one with the most tokens, then
+-- the first indexed. Messages without api_message_id (user turns, pi, opencode)
+-- pass through untouched.
+CREATE VIEW IF NOT EXISTS message_usage AS
+WITH ranked AS (
+	SELECT m.*, m.rowid AS row_id, s.session_id,
+		COALESCE(m.tokens_in, 0) + COALESCE(m.tokens_out, 0)
+			+ COALESCE(m.cache_read_tokens, 0) + COALESCE(m.cache_write_tokens, 0) AS usage_total,
+		ROW_NUMBER() OVER (
+			PARTITION BY
+				CASE WHEN m.api_message_id IS NULL THEN m.file_path END,
+				COALESCE(m.api_message_id, m.id),
+				m.request_id,
+				CASE WHEN m.api_message_id IS NOT NULL AND m.request_id IS NULL THEN s.session_id END,
+				CASE WHEN m.api_message_id IS NOT NULL AND m.request_id IS NULL THEN m.timestamp END
+			ORDER BY m.is_sidechain,
+				COALESCE(m.tokens_in, 0) + COALESCE(m.tokens_out, 0)
+					+ COALESCE(m.cache_read_tokens, 0) + COALESCE(m.cache_write_tokens, 0) DESC,
+				m.rowid
+		) AS exact_rank
+	FROM messages m
+	JOIN sessions s ON s.file_path = m.file_path
+),
+exact AS (SELECT * FROM ranked WHERE exact_rank = 1)
+SELECT w.id, w.file_path, w.session_id, w.parent_id, w.role, w.timestamp, w.model,
+	w.tokens_in, w.tokens_out, w.cache_read_tokens, w.cache_write_tokens, w.reasoning_tokens,
+	w.agent_id, w.api_message_id, w.request_id, w.is_sidechain
+FROM exact w
+WHERE w.api_message_id IS NULL OR NOT EXISTS (
+	SELECT 1 FROM exact o
+	WHERE o.api_message_id = w.api_message_id
+		AND o.session_id = w.session_id
+		AND o.row_id <> w.row_id
+		AND (o.is_sidechain = 1 OR w.is_sidechain = 1)
+		AND ((o.request_id IS NULL AND w.request_id IS NULL) OR o.timestamp = w.timestamp)
+		AND (o.is_sidechain < w.is_sidechain
+			OR (o.is_sidechain = w.is_sidechain AND (o.usage_total > w.usage_total
+				OR (o.usage_total = w.usage_total AND o.row_id < w.row_id))))
+);
 
 -- Content blocks table (references messages by file_path + message_id)
 CREATE TABLE IF NOT EXISTS content_blocks (
@@ -213,6 +272,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 	session_id,
 	message_id,
 	text,
+	-- Forks reuse their parent's session id and message ids, so only the file
+	-- tells their rows apart (e.g. when one is reindexed).
+	file_path UNINDEXED,
 	tokenize='porter'
 );
 `;
@@ -238,6 +300,7 @@ function initializeSchema(database: Database) {
 
   if (version !== undefined && version !== SCHEMA_VERSION) {
     // Index DB is a cache — just nuke and recreate on version mismatch
+    database.exec("DROP VIEW IF EXISTS message_usage");
     database.exec("DROP TABLE IF EXISTS messages_fts");
     database.exec("DROP TABLE IF EXISTS content_blocks");
     database.exec("DROP TABLE IF EXISTS pr_links");

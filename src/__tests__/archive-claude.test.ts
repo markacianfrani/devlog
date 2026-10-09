@@ -196,6 +196,12 @@ test("archives subagent session files under their parent session directory", () 
       { type: "user", content: "subagent task" },
     ]);
 
+    // Workflow agents live a level deeper and must be archived too.
+    const workflowAgent = path.join("workflows", "wf_abc", "agent-wf.jsonl");
+    writeJsonl(path.join(claudeProjectDir, sessionId, "subagents", workflowAgent), [
+      { type: "user", content: "workflow task" },
+    ]);
+
     runArchive(home);
 
     const archiveRoot = path.join(home, ".config", "devlog", "projects", slug);
@@ -203,6 +209,9 @@ test("archives subagent session files under their parent session directory", () 
     expect(fs.existsSync(path.join(archiveRoot, "claude", sessionId, "subagents", agentFile))).toBe(
       true,
     );
+    expect(
+      fs.existsSync(path.join(archiveRoot, "claude", sessionId, "subagents", workflowAgent)),
+    ).toBe(true);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

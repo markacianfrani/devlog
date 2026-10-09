@@ -168,7 +168,7 @@ const TOOLS = {
 					        s.created_at, s.updated_at,
 					        snippet(messages_fts, 2, '<<', '>>', '...', 20) as snippet
 					 FROM messages_fts
-					 JOIN sessions s ON messages_fts.session_id = s.session_id
+					 JOIN sessions s ON messages_fts.file_path = s.file_path
 					 WHERE messages_fts MATCH ?
 					 ORDER BY rank
 					 LIMIT ?`,
@@ -366,6 +366,7 @@ const TOOLS = {
         "pr_links",
         "artifact_links",
         "messages_fts",
+        "message_usage",
       ];
       const lines: string[] = [];
       for (const table of tables) {
@@ -382,7 +383,7 @@ const TOOLS = {
 
   query: {
     description:
-      "Execute a raw SQL SELECT query against the devlog database. The DB is read-only so only SELECT statements work. Tables: sessions, messages, content_blocks, messages_fts.",
+      "Execute a raw SQL SELECT query against the devlog database. The DB is read-only so only SELECT statements work. Tables: sessions, messages, content_blocks, messages_fts. Sum token usage over the message_usage view, which counts each API response once even when forks or subagents replay it across sessions.",
     schema: v.object({
       sql: v.pipe(v.string(), v.description("SQL SELECT query to execute")),
     }),

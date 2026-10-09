@@ -28,6 +28,25 @@ interface ConversationFile {
   archiveRelPath: string; // relative to {archiveBaseDir}/{projectName}
 }
 
+// Claude nests subagent transcripts arbitrarily deep: `<session>/subagents/*.jsonl`
+// for plain subagents and `<session>/subagents/workflows/<wf>/…` for workflow
+// agents. Walk the whole subtree so nested runs are archived too.
+function collectSubagentFiles(
+  dir: string,
+  archiveRelDir: string,
+  results: ConversationFile[],
+): void {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const sourcePath = path.join(dir, entry.name);
+    const archiveRelPath = `${archiveRelDir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      collectSubagentFiles(sourcePath, archiveRelPath, results);
+    } else if (entry.name.endsWith(".jsonl")) {
+      results.push({ sourcePath, archiveRelPath });
+    }
+  }
+}
+
 function getConversationFiles(projectPath: string): ConversationFile[] {
   const results: ConversationFile[] = [];
 
@@ -40,14 +59,7 @@ function getConversationFiles(projectPath: string): ConversationFile[] {
     } else {
       const subagentDir = path.join(projectPath, entry, "subagents");
       if (fs.existsSync(subagentDir) && fs.statSync(subagentDir).isDirectory()) {
-        for (const agentFile of fs.readdirSync(subagentDir)) {
-          if (agentFile.endsWith(".jsonl")) {
-            results.push({
-              sourcePath: path.join(subagentDir, agentFile),
-              archiveRelPath: `claude/${entry}/subagents/${agentFile}`,
-            });
-          }
-        }
+        collectSubagentFiles(subagentDir, `claude/${entry}/subagents`, results);
       }
     }
   }

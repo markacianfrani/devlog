@@ -83,6 +83,19 @@ interface BaseMessage {
   cacheWriteTokens?: number;
   reasoningTokens?: number;
   agentId?: string;
+  usageIdentity?: UsageIdentity;
+}
+
+/**
+ * Identifies the API response a message's usage belongs to, so the same response
+ * replayed across files (forks, subagent sidechains) is counted once. Mirrors
+ * ccusage: `messageId` + `requestId` is global; without a request id the match is
+ * scoped to the session and timestamp.
+ */
+export interface UsageIdentity {
+  messageId: string;
+  requestId?: string;
+  isSidechain: boolean;
 }
 
 export interface UserMessage extends BaseMessage {
@@ -184,6 +197,7 @@ export interface MessageDraft {
   cacheWriteTokens?: number;
   reasoningTokens?: number;
   agentId?: string;
+  usageIdentity?: UsageIdentity;
 }
 
 export interface SessionMetaDraft {
@@ -255,6 +269,7 @@ function createBaseMessage(draft: MessageDraft): BaseMessage | undefined {
     ...(draft.cacheWriteTokens !== undefined && { cacheWriteTokens: draft.cacheWriteTokens }),
     ...(draft.reasoningTokens !== undefined && { reasoningTokens: draft.reasoningTokens }),
     ...(draft.agentId && { agentId: draft.agentId }),
+    ...(draft.usageIdentity && { usageIdentity: draft.usageIdentity }),
   };
 }
 

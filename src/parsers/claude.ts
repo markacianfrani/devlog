@@ -19,6 +19,7 @@ import {
   type ContentBlock,
   type ParseOutcome,
   type PrLink,
+  type UsageIdentity,
   type WorktreeInfo,
 } from "./types.ts";
 
@@ -83,6 +84,8 @@ interface ClaudeRecord {
   cwd?: string;
   isMeta?: boolean;
   agentId?: string;
+  requestId?: string;
+  isSidechain?: boolean;
   summary?: string;
   customTitle?: string;
   aiTitle?: string;
@@ -102,6 +105,7 @@ interface ClaudeRecord {
     originalHeadCommit?: string;
   };
   message?: {
+    id?: string;
     role?: string;
     model?: string;
     content?: string | RawContentBlock[];
@@ -256,19 +260,72 @@ function updateSessionState(state: SessionState, record: ClaudeRecord): void {
   }
 }
 
+/**
+ * Claude Code streams one API response as several JSONL records, one per content
+ * block, each repeating the response's
+ * `message.id` and `requestId`. Like ccusage, a response is identified by
+ * `message.id` + `requestId`; without a request id (some gateways reuse one
+ * message id for every response) it is scoped to the session and timestamp.
+ * Records that are not assistant responses are identified by their uuid.
+ */
+function claudeFoldKey(record: ClaudeRecord, sessionId: string | undefined): string | undefined {
+  const messageId = record.message?.id;
+  if (record.type !== "assistant" || !messageId) {
+    return record.uuid;
+  }
+  return record.requestId
+    ? `${messageId}\0${record.requestId}`
+    : `${messageId}\0${record.sessionId ?? sessionId ?? ""}\0${record.timestamp ?? ""}`;
+}
+
+function claudeUsageIdentity(record: ClaudeRecord): UsageIdentity | undefined {
+  const messageId = record.message?.id;
+  if (record.type !== "assistant" || !messageId) {
+    return undefined;
+  }
+  return {
+    messageId,
+    ...(record.requestId && { requestId: record.requestId }),
+    isSidechain: record.isSidechain === true,
+  };
+}
+
+function usageTotal(msg: CleanMessage): number {
+  return (
+    (msg.tokensIn ?? 0) +
+    (msg.tokensOut ?? 0) +
+    (msg.cacheReadTokens ?? 0) +
+    (msg.cacheWriteTokens ?? 0)
+  );
+}
+
+/** ccusage's survivor rule: a main-chain record beats a sidechain one, then larger usage wins. */
+function shouldReplaceUsage(candidate: CleanMessage, existing: CleanMessage): boolean {
+  const candidateSidechain = candidate.usageIdentity?.isSidechain === true;
+  const existingSidechain = existing.usageIdentity?.isSidechain === true;
+  if (candidateSidechain !== existingSidechain) {
+    return existingSidechain;
+  }
+  return usageTotal(candidate) > usageTotal(existing);
+}
+
 function buildClaudeMessage(
   record: ClaudeRecord,
   sessionId: string | undefined,
   contentBlocks: ContentBlock[],
+  id: string | undefined,
+  parentId: string | undefined,
 ): CleanMessage | undefined {
   const usage = record.message?.usage;
+  const usageIdentity = claudeUsageIdentity(record);
   const messageDraft = {
-    id: record.uuid,
+    id,
     sessionId: record.sessionId ?? sessionId,
     timestamp: record.timestamp,
-    ...(record.parentUuid && { parentId: record.parentUuid }),
+    ...(parentId && { parentId }),
     ...(record.message?.model && { model: record.message.model }),
     ...(record.agentId && { agentId: record.agentId }),
+    ...(usageIdentity && { usageIdentity }),
     ...(usage?.input_tokens !== undefined && { tokensIn: usage.input_tokens }),
     ...(usage?.output_tokens !== undefined && { tokensOut: usage.output_tokens }),
     ...(usage?.cache_read_input_tokens !== undefined && {
@@ -284,6 +341,68 @@ function buildClaudeMessage(
   }
 
   return createAssistantMessage(messageDraft, contentBlocks);
+}
+
+interface ClaudeMessageAccumulator {
+  /** Keyed by fold key; Map insertion order is the transcript order. */
+  messages: Map<string, CleanMessage>;
+  /** Record uuid -> stored id of the message it was folded into. */
+  storedIdByUuid: Map<string, string>;
+  /** Fold key -> uuids of the records already folded in, so a replayed record adds nothing. */
+  foldedUuids: Map<string, Set<string>>;
+}
+
+/**
+ * Adds a record's message to the session, folding streaming records of one API
+ * response into a single message. The folded message keeps the first record's
+ * uuid and parent; its usage comes from the survivor per ccusage's rule; content
+ * blocks from every distinct record are kept in the order they streamed in. Blocks
+ * are not compared by content: distinct blocks can be identical (e.g. several
+ * empty-text thinking or redacted_thinking blocks).
+ */
+function storeClaudeMessage(
+  record: ClaudeRecord,
+  state: SessionState,
+  contentBlocks: ContentBlock[],
+  acc: ClaudeMessageAccumulator,
+): void {
+  const foldKey = claudeFoldKey(record, state.sessionId);
+  if (!foldKey) {
+    return;
+  }
+  const existing = acc.messages.get(foldKey);
+  const id = existing?.id ?? record.uuid;
+  if (record.uuid && id) {
+    acc.storedIdByUuid.set(record.uuid, id);
+  }
+  const parentId = record.parentUuid
+    ? (acc.storedIdByUuid.get(record.parentUuid) ?? record.parentUuid)
+    : undefined;
+
+  const msg = buildClaudeMessage(record, state.sessionId, contentBlocks, id, parentId);
+  if (!msg) {
+    return;
+  }
+
+  const folded = acc.foldedUuids.get(foldKey) ?? new Set<string>();
+  acc.foldedUuids.set(foldKey, folded);
+  const isReplay = record.uuid !== undefined && folded.has(record.uuid);
+  if (record.uuid) {
+    folded.add(record.uuid);
+  }
+
+  if (existing?.role !== "assistant" || msg.role !== "assistant") {
+    acc.messages.set(foldKey, msg);
+    return;
+  }
+
+  const { parentId: _ignored, ...survivor } = shouldReplaceUsage(msg, existing) ? msg : existing;
+  acc.messages.set(foldKey, {
+    ...survivor,
+    id: existing.id,
+    ...(existing.parentId && { parentId: existing.parentId }),
+    content: isReplay ? existing.content : [...existing.content, ...msg.content],
+  });
 }
 
 function collectPrLink(record: ClaudeRecord, prLinkMap: Map<string, PrLink>): void {
@@ -322,8 +441,11 @@ export async function parseClaudeSession(
 ): Promise<ParseOutcome> {
   const lines = readJsonlLines(jsonlPath);
 
-  const messageMap = new Map<string, CleanMessage>();
-  const messageOrder: string[] = [];
+  const acc: ClaudeMessageAccumulator = {
+    messages: new Map(),
+    storedIdByUuid: new Map(),
+    foldedUuids: new Map(),
+  };
   const prLinkMap = new Map<string, PrLink>();
   const artifactLinkMap = new Map<string, ArtifactLink>();
   const state: SessionState = {};
@@ -361,21 +483,10 @@ export async function parseClaudeSession(
       continue;
     }
 
-    const msg = buildClaudeMessage(record, state.sessionId, contentBlocks);
-    if (!msg) {
-      continue;
-    }
-
-    if (!messageMap.has(msg.id)) {
-      messageOrder.push(msg.id);
-    }
-    messageMap.set(msg.id, msg);
+    storeClaudeMessage(record, state, contentBlocks, acc);
   }
 
-  const messages = messageOrder.flatMap((id) => {
-    const msg = messageMap.get(id);
-    return msg ? [msg] : [];
-  });
+  const messages = [...acc.messages.values()];
 
   warnings.malformedLines(malformedLines);
 

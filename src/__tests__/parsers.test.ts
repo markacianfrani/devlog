@@ -498,10 +498,10 @@ describe("Claude parser", () => {
     expect(doc.mediaType).toBe("application/pdf");
   });
 
-  test("deduplicates messages with the same uuid, keeping the last", async () => {
+  test("folds streaming records of one API response into one message", async () => {
     const result = expectParsed(
       await parseClaudeSession(
-        path.join(FIXTURES_DIR, "claude-duplicate-uuids.jsonl"),
+        path.join(FIXTURES_DIR, "claude-duplicate-message-ids.jsonl"),
         "test-project",
       ),
     );
@@ -509,11 +509,48 @@ describe("Claude parser", () => {
     expect(result.messages).toHaveLength(3);
 
     const asstMsg = at(result.messages, 1);
-    expect(asstMsg.id).toBe("msg-asst-1");
-    expect((at(asstMsg.content, 0) as TextContentBlock).text).toBe(
-      "Full response with more detail.",
-    );
+    // The folded message keeps the first record's uuid and parent, not a
+    // self-reference from the second record's parentUuid.
+    expect(asstMsg.id).toBe("rec-1a");
+    expect(asstMsg.parentId).toBe("msg-user-1");
+    expect(asstMsg.usageIdentity).toEqual({
+      messageId: "msg-asst-1",
+      requestId: "req_toot",
+      isSidechain: false,
+    });
+    // Blocks from every streaming record survive, in the order they arrived.
+    expect(asstMsg.content).toHaveLength(2);
+    expect(at(asstMsg.content, 0).type).toBe("thinking");
+    expect((at(asstMsg.content, 1) as TextContentBlock).text).toBe("That was a fart.");
+    // Usage comes from the record with the most tokens, not summed across records.
+    expect(asstMsg.tokensIn).toBe(10);
     expect(asstMsg.tokensOut).toBe(20);
+    expect(asstMsg.cacheReadTokens).toBe(5);
+    expect(asstMsg.cacheWriteTokens).toBe(2);
+
+    // A child pointing at the second record is remapped to the folded message.
+    expect(at(result.messages, 2).parentId).toBe("rec-1a");
+  });
+
+  test("keeps identical-looking blocks from distinct records, but not a replayed record", async () => {
+    const result = expectParsed(
+      await parseClaudeSession(
+        path.join(FIXTURES_DIR, "claude-streamed-redacted-thinking.jsonl"),
+        "test-project",
+      ),
+    );
+
+    expect(result.messages).toHaveLength(2);
+    const asstMsg = at(result.messages, 1);
+    // An empty-text thinking block parses as redacted_thinking, so both blocks
+    // look the same; neither may be dropped. The duplicated last record (same
+    // uuid) contributes its text once.
+    expect(asstMsg.content.map((block) => block.type)).toEqual([
+      "redacted_thinking",
+      "redacted_thinking",
+      "text",
+    ]);
+    expect(asstMsg.tokensOut).toBe(3);
   });
 });
 

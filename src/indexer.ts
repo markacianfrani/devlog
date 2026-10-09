@@ -53,14 +53,11 @@ function getMtime(filePath: string): number {
 interface SessionCheck {
   exists: boolean;
   sameVersion: boolean;
-  sessionId?: string;
 }
 
 function checkSession(db: Database, filePath: string, mtime: number): SessionCheck {
   const row = db
-    .query<{ mtime: number; session_id: string }, [string]>(
-      "SELECT mtime, session_id FROM sessions WHERE file_path = ?",
-    )
+    .query<{ mtime: number }, [string]>("SELECT mtime FROM sessions WHERE file_path = ?")
     .get(filePath);
 
   if (!row) {
@@ -70,17 +67,15 @@ function checkSession(db: Database, filePath: string, mtime: number): SessionChe
   return {
     exists: true,
     sameVersion: row.mtime === mtime,
-    sessionId: row.session_id,
   };
 }
 
-function deleteSession(db: Database, filePath: string, sessionId: string) {
+function deleteSession(db: Database, filePath: string) {
   // CASCADE delete will handle messages and content_blocks
   db.run("DELETE FROM sessions WHERE file_path = ?", [filePath]);
-  // FTS table doesn't have CASCADE, delete manually
-  if (sessionId) {
-    db.run("DELETE FROM messages_fts WHERE session_id = ?", [sessionId]);
-  }
+  // FTS table doesn't have CASCADE, delete manually. Scope by file, not session
+  // id: a fork shares its parent's session id.
+  db.run("DELETE FROM messages_fts WHERE file_path = ?", [filePath]);
 }
 
 // SQLite requires null (not undefined) for NULL values
@@ -133,8 +128,8 @@ function insertWorktree(db: Database, result: ParseResult, filePath: string) {
 
 function insertMessages(db: Database, result: ParseResult, filePath: string) {
   const insertMsg = db.prepare(
-    `INSERT INTO messages (id, file_path, parent_id, role, timestamp, model, tokens_in, tokens_out, cache_read_tokens, cache_write_tokens, reasoning_tokens, agent_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO messages (id, file_path, parent_id, role, timestamp, model, tokens_in, tokens_out, cache_read_tokens, cache_write_tokens, reasoning_tokens, agent_id, api_message_id, request_id, is_sidechain)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   const insertBlock = db.prepare(
@@ -143,7 +138,7 @@ function insertMessages(db: Database, result: ParseResult, filePath: string) {
   );
 
   const insertFts = db.prepare(
-    `INSERT INTO messages_fts (session_id, message_id, text) VALUES (?, ?, ?)`,
+    `INSERT INTO messages_fts (session_id, message_id, text, file_path) VALUES (?, ?, ?, ?)`,
   );
 
   for (const msg of result.messages) {
@@ -160,6 +155,9 @@ function insertMessages(db: Database, result: ParseResult, filePath: string) {
       toSqlValue(msg.cacheWriteTokens),
       toSqlValue(msg.reasoningTokens),
       toSqlValue(msg.agentId),
+      toSqlValue(msg.usageIdentity?.messageId),
+      toSqlValue(msg.usageIdentity?.requestId),
+      msg.usageIdentity?.isSidechain ? 1 : 0,
     );
 
     const textParts: string[] = [];
@@ -211,7 +209,7 @@ function insertMessages(db: Database, result: ParseResult, filePath: string) {
     }
 
     if (textParts.length > 0) {
-      insertFts.run(result.meta.id, msg.id, textParts.join("\n"));
+      insertFts.run(result.meta.id, msg.id, textParts.join("\n"), filePath);
     }
   }
 }
@@ -287,8 +285,8 @@ export async function indexSession(
 
   db.exec("BEGIN TRANSACTION");
   try {
-    if (existing.exists && existing.sessionId) {
-      deleteSession(db, jsonlPath, existing.sessionId);
+    if (existing.exists) {
+      deleteSession(db, jsonlPath);
     }
     insertSession(db, result, jsonlPath, mtime);
     insertWorktree(db, result, jsonlPath);

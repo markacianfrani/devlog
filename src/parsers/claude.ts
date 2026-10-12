@@ -69,6 +69,18 @@ const NON_MESSAGE_TYPES = new Set([
   "marble-origami-commit",
   "marble-origami-snapshot",
   "marble-origami-reset",
+  // Workflow run journals (subagents/workflows/wf_*/journal.jsonl): the resume
+  // cache the Workflow tool writes beside its agent transcripts — one `launched`
+  // line, `started`/`result`/`failed` per agent() call keyed "v2:<sha256>", and
+  // `restoring`/`restored` markers on a resumeFromRunId run. The source scanner
+  // no longer archives journals, so these only reach the parser from archives
+  // made before that; they parse to an empty session either way.
+  "launched",
+  "started",
+  "result",
+  "failed",
+  "restoring",
+  "restored",
 ]);
 
 // Content blocks that carry session metadata, not conversation content.

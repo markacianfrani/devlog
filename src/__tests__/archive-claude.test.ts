@@ -202,6 +202,12 @@ test("archives subagent session files under their parent session directory", () 
       { type: "user", content: "workflow task" },
     ]);
 
+    // The run's journal.jsonl is a resume cache, not a conversation.
+    const workflowJournal = path.join("workflows", "wf_abc", "journal.jsonl");
+    writeJsonl(path.join(claudeProjectDir, sessionId, "subagents", workflowJournal), [
+      { type: "launched" },
+    ]);
+
     runArchive(home);
 
     const archiveRoot = path.join(home, ".config", "devlog", "projects", slug);
@@ -212,6 +218,9 @@ test("archives subagent session files under their parent session directory", () 
     expect(
       fs.existsSync(path.join(archiveRoot, "claude", sessionId, "subagents", workflowAgent)),
     ).toBe(true);
+    expect(
+      fs.existsSync(path.join(archiveRoot, "claude", sessionId, "subagents", workflowJournal)),
+    ).toBe(false);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

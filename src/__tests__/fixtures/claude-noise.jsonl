@@ -29,6 +29,12 @@
 {"type":"marble-origami-commit","sessionId":"test-session-4","commit":"fart-fold-1"}
 {"type":"marble-origami-snapshot","sessionId":"test-session-4","snapshot":"fart-fold-snap"}
 {"type":"marble-origami-reset","sessionId":"test-session-4"}
+{"type":"launched"}
+{"type":"started","key":"v2:fart0000000000000000000000000000000000000000000000000000000000","agentId":"agent-wf-fart-1","label":"resolve:fart-shape","phase":"Resolve"}
+{"type":"result","key":"v2:fart0000000000000000000000000000000000000000000000000000000000","agentId":"agent-wf-fart-1","result":"fart resolved"}
+{"type":"failed","key":"v2:toot00000000000000000000000000000000000000000000000000000000","agentId":"agent-wf-fart-2"}
+{"type":"restoring","runId":"wf_fart1234-567"}
+{"type":"restored","runId":"wf_fart1234-567"}
 {"type":"user","sessionId":"test-session-4","uuid":"msg-user-1","parentUuid":null,"timestamp":"2026-01-20T10:00:00.000Z","cwd":"/home/user/project","isMeta":true,"message":{"role":"user","content":"Meta message to skip"}}
 {"type":"user","sessionId":"test-session-4","uuid":"msg-user-2","parentUuid":null,"timestamp":"2026-01-20T10:00:01.000Z","cwd":"/home/user/project","message":{"role":"user","content":"Real user message"}}
 {"type":"assistant","sessionId":"test-session-4","uuid":"msg-asst-1","parentUuid":"msg-user-2","timestamp":"2026-01-20T10:00:05.000Z","cwd":"/home/user/project","message":{"role":"assistant","model":"claude-opus-4-5-20251101","content":[{"type":"fallback","from":{"model":"claude-fart-5"},"to":{"model":"claude-fart-4-8"}},{"type":"thinking","thinking":"Let me think about this..."},{"type":"text","text":"Here is my response."}],"usage":{"input_tokens":100,"output_tokens":50}}}

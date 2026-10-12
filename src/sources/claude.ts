@@ -30,7 +30,9 @@ interface ConversationFile {
 
 // Claude nests subagent transcripts arbitrarily deep: `<session>/subagents/*.jsonl`
 // for plain subagents and `<session>/subagents/workflows/<wf>/…` for workflow
-// agents. Walk the whole subtree so nested runs are archived too.
+// agents. Walk the whole subtree so nested runs are archived too. The Workflow
+// tool also writes a `journal.jsonl` resume cache next to each run's agent
+// transcripts; it is run metadata, not a conversation, so it is not archived.
 function collectSubagentFiles(
   dir: string,
   archiveRelDir: string,
@@ -41,7 +43,7 @@ function collectSubagentFiles(
     const archiveRelPath = `${archiveRelDir}/${entry.name}`;
     if (entry.isDirectory()) {
       collectSubagentFiles(sourcePath, archiveRelPath, results);
-    } else if (entry.name.endsWith(".jsonl")) {
+    } else if (entry.name.endsWith(".jsonl") && entry.name !== "journal.jsonl") {
       results.push({ sourcePath, archiveRelPath });
     }
   }

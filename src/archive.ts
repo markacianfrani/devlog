@@ -6,6 +6,7 @@ import {
   DEFAULT_CLI_OPTIONS,
   formatIndexedTarget,
   formatParseWarning,
+  printArchiveHeader,
   printArchiveSummary,
   printIndexSummary,
   ProgressReporter,
@@ -31,6 +32,7 @@ export async function archiveMain(options: CliOptions = DEFAULT_CLI_OPTIONS) {
   ensureDir(PROJECTS_ARCHIVE_DIR);
 
   const summaries: SourceSummary[] = [];
+  printArchiveHeader(ARCHIVE_DIR, options);
 
   for (const source of SOURCES) {
     if (!isExcluded(source)) {

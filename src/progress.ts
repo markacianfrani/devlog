@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { pathToFileURL } from "node:url";
@@ -22,7 +23,6 @@ interface ProgressState {
   label: string;
   processed: number;
   total: number;
-  totalLabelWidth: number;
   archived: number;
   skipped: number;
 }
@@ -38,6 +38,11 @@ const SOURCE_THEME: Record<string, { icon: string; color: number }> = {
 
 function isInteractiveTerminal() {
   return Boolean(process.stdout.isTTY);
+}
+
+function terminalColumns() {
+  const columns = process.stdout.columns;
+  return columns > 0 ? columns : 80;
 }
 
 function ansi(code: number, text: string) {
@@ -76,12 +81,38 @@ function sourceTheme(label: string) {
   return SOURCE_THEME[label] ?? { icon: "•", color: 39 };
 }
 
-function renderMeter(processed: number, total: number, color: number) {
-  const width = 12;
-  const ratio = total > 0 ? Math.min(1, processed / total) : 0;
-  const filled = Math.round(width * ratio);
-  const bar = `${"█".repeat(filled)}${"░".repeat(width - filled)}`;
-  return tint(bar, color);
+// Keep the completed rows and the live row on the same column grid. The progress
+// bar used to take up space without conveying anything once a source finished.
+export function formatProgressRow(
+  state: Pick<ProgressState, "label" | "processed" | "total" | "archived" | "skipped">,
+  done: boolean,
+  columns = terminalColumns(),
+  frame = 0,
+) {
+  const { label, processed, total, archived, skipped } = state;
+  const theme = sourceTheme(label);
+  const status = done
+    ? success("✓")
+    : tint(SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? "•", theme.color);
+  const count = total > 0 ? `${processed}/${total}` : String(processed);
+  const name = `${tint(theme.icon, theme.color)} ${bold(label)}`;
+  const action = label === "index" ? "indexed" : "copied";
+  const compact = `${status} ${name}  ${dim(count)}  ${archived} ${action}  ${skipped} same`;
+
+  // Don't wrap the live row in narrow terminals or let large counts break the grid.
+  if (
+    columns < 73 ||
+    label.length > 8 ||
+    count.length > 9 ||
+    String(archived).length > 5 ||
+    String(skipped).length > 6
+  ) {
+    return compact;
+  }
+
+  const source = `${tint(theme.icon, theme.color)} ${bold(label.padEnd(8))}`;
+  const results = `${success(String(archived).padStart(5))} ${action}  ${String(skipped).padStart(6)} unchanged`;
+  return `${status} ${source}  ${dim(count.padStart(9))} checked  ${results}`;
 }
 
 function pluralize(count: number, singular: string, plural = `${singular}s`) {
@@ -123,15 +154,14 @@ export class ProgressReporter {
       return;
     }
 
-    const totalDigits = Math.max(String(total).length, 1);
     this.current = {
       label,
       processed: 0,
       total,
-      totalLabelWidth: totalDigits * 2 + 1,
       archived: 0,
       skipped: 0,
     };
+    this.frame = 0;
     this.render(true);
   }
 
@@ -140,9 +170,7 @@ export class ProgressReporter {
       return;
     }
 
-    const totalDigits = String(total).length;
     this.current.total = total;
-    this.current.totalLabelWidth = totalDigits * 2 + 1;
   }
 
   tick(update: Partial<ProgressState>) {
@@ -151,7 +179,8 @@ export class ProgressReporter {
     }
 
     this.current = { ...this.current, ...update };
-    this.render();
+    const stride = Math.max(1, Math.ceil(this.current.total / 40));
+    this.render(update.processed !== undefined && this.current.processed % stride === 0);
   }
 
   warn(message: string) {
@@ -168,14 +197,7 @@ export class ProgressReporter {
       return;
     }
 
-    const { label, processed, total, totalLabelWidth, archived, skipped } = this.current;
-    const theme = sourceTheme(label);
-    const totalLabel = (total > 0 ? `${processed}/${total}` : `${processed}`).padStart(
-      totalLabelWidth,
-    );
-    const meter = renderMeter(processed, total, theme.color);
-    const check = success("✓");
-    const line = `${check} ${tint(theme.icon, theme.color)} ${bold(label.padEnd(8))} ${meter} ${dim(totalLabel)}  ${archived} new  ${skipped} unchanged`;
+    const line = formatProgressRow(this.current, true);
     this.clear();
     console.log(line);
     this.current = undefined;
@@ -199,15 +221,7 @@ export class ProgressReporter {
     }
     this.lastRenderAt = now;
 
-    const { label, processed, total, totalLabelWidth, archived, skipped } = this.current;
-    const theme = sourceTheme(label);
-    const spinner = tint(SPINNER_FRAMES[this.frame % SPINNER_FRAMES.length] ?? "•", theme.color);
-    this.frame += 1;
-    const totalLabel = (total > 0 ? `${processed}/${total}` : `${processed}`).padStart(
-      totalLabelWidth,
-    );
-    const meter = renderMeter(processed, total, theme.color);
-    const line = `${spinner} ${tint(theme.icon, theme.color)} ${bold(label.padEnd(8))} ${meter} ${dim(totalLabel)}  ${archived} new  ${skipped} unchanged`;
+    const line = formatProgressRow(this.current, false, terminalColumns(), this.frame++);
     this.clear();
     process.stdout.write(line);
   }
@@ -245,6 +259,21 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+export function printArchiveHeader(archiveDir: string, options: CliOptions) {
+  if (!isInteractiveTerminal() || options.verbose) {
+    return;
+  }
+
+  const home = os.homedir();
+  const destination =
+    archiveDir === home
+      ? "~"
+      : archiveDir.startsWith(`${home}${path.sep}`)
+        ? `~${archiveDir.slice(home.length)}`
+        : archiveDir;
+  console.log(`  ${dim("sessions")}  ${tint("───→", 36)}  ${bold(destination)}\n`);
+}
+
 export function printArchiveSummary(
   summaries: SourceSummary[],
   archiveDir: string,
@@ -273,11 +302,10 @@ export function printArchiveSummary(
     return;
   }
 
-  console.log(
-    `\n${bold("devlog archive")}  ${dim(formatDuration(durationMs))}  ${success(String(totalArchived))} updated  ${totalSkipped} unchanged`,
-  );
+  console.log(`\n  ${bold("devlog archive")}  ${dim(formatDuration(durationMs))}`);
+  console.log(`  ${success(String(totalArchived))} copied  ${dim("·")}  ${totalSkipped} unchanged`);
   if (totalWarnings > 0) {
-    console.log(`${bold("Warnings")} ${totalWarnings}`);
+    console.log(`  ${bold("Warnings")} ${totalWarnings}`);
   }
 }
 
@@ -307,23 +335,16 @@ export function printIndexSummary(
     return;
   }
 
-  console.log(`\n${bold("devlog index")}`);
-  console.log(dim(`Finished in ${formatDuration(durationMs)}  •  db ${dbPath}`));
-  console.log("");
+  console.log(`\n  ${bold("devlog index")}  ${dim(formatDuration(durationMs))}`);
   console.log(
-    `${tint("⌕", 32)} ${bold("Index")} ${dim("•")} ${stats.sessionsIndexed} new  ${stats.sessionsSkipped} unchanged  ${stats.messagesIndexed} messages`,
+    `  ${success(String(stats.sessionsIndexed))} ${pluralize(stats.sessionsIndexed, "session")} indexed  ${dim("·")}  ${stats.sessionsSkipped} unchanged  ${dim("·")}  ${stats.messagesIndexed} messages`,
   );
-  console.log("");
-  console.log(
-    `${success(bold("Indexed"))} ${success(String(stats.sessionsIndexed))} ${pluralize(stats.sessionsIndexed, "session")}`,
-  );
-  console.log(`${bold("Skipped")} ${stats.sessionsSkipped} unchanged`);
-  console.log(`${bold("Messages")} ${stats.messagesIndexed}`);
+  console.log(`  ${dim(`Database: ${dbPath}`)}`);
   if ((stats.warnings ?? 0) > 0) {
-    console.log(`${bold("Warnings")} ${stats.warnings}`);
+    console.log(`  ${bold("Warnings")} ${stats.warnings}`);
   }
   if (stats.errors > 0) {
-    console.log(`${bold("Errors")} ${stats.errors}`);
+    console.log(`  ${bold("Errors")} ${stats.errors}`);
   }
 }
 

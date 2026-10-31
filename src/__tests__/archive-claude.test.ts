@@ -47,6 +47,61 @@ test("writes the index to config.dbPath when set", () => {
   }
 });
 
+test("bare devlog archives then indexes, even when the archive is already current", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "devlog-test-"));
+  try {
+    const projectDir = path.join(home, ".claude", "projects", "-fart-project");
+    writeJsonl(path.join(projectDir, "fart-session.jsonl"), [
+      {
+        type: "user",
+        sessionId: "fart-session",
+        uuid: "fart-user",
+        timestamp: "2026-01-20T10:00:00.000Z",
+        cwd: home,
+        message: { role: "user", content: "fart" },
+      },
+      {
+        type: "assistant",
+        sessionId: "fart-session",
+        uuid: "fart-assistant",
+        parentUuid: "fart-user",
+        timestamp: "2026-01-20T10:00:01.000Z",
+        cwd: home,
+        message: { role: "assistant", content: [{ type: "text", text: "fart" }] },
+      },
+    ]);
+    writeConfig(home, { excludeSources: ["opencode", "pi"] });
+
+    const archiveOnly = runArchive(home, ["archive"]);
+    expect(archiveOnly.exitCode).toBe(0);
+    const dbPath = path.join(home, ".local", "state", "devlog", "index.db");
+    expect(fs.existsSync(dbPath)).toBe(false);
+
+    const result = runArchive(home, []);
+    const stdout = decodeOutput(result.stdout);
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain("[1/2] Archive transcripts");
+    expect(stdout).toContain("[2/2] Index sessions for search");
+    expect(stdout.indexOf("[1/2]")).toBeLessThan(stdout.indexOf("[2/2]"));
+    expect(stdout).toContain("2 messages indexed");
+    expect(fs.existsSync(dbPath)).toBe(true);
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      expect(
+        db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM sessions").get()?.count,
+      ).toBe(1);
+    } finally {
+      db.close();
+    }
+
+    const rebuild = runArchive(home, ["--rebuild"]);
+    expect(rebuild.exitCode).toBe(0);
+    expect(decodeOutput(rebuild.stdout)).toContain("[2/2] Rebuild search index");
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("archives Claude conversations", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "devlog-test-"));
   try {

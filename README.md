@@ -16,20 +16,21 @@ devlog init
 ## Commands
 
 ```bash
-devlog archive          # copy new sessions to your archive
-devlog index            # index archived sessions into SQLite for search
+devlog                  # copy sessions, then index them for search
+devlog archive          # only copy sessions to your archive
+devlog index            # only index archived sessions into SQLite
 devlog mcp              # start the MCP server (stdio)
 devlog init             # first-time setup
 ```
 
-`archive` and `index` skip files that haven't changed since the last run.
+Each stage skips sessions that haven't changed since the last run. Use `archive` or `index` when you only need one stage.
 
 ### Options
 
 ```
 --verbose    show per-project and per-session details
 --debug      extra noisy diagnostics
---rebuild    (index only) wipe the database and re-index everything
+--rebuild    with devlog or index, wipe the database and re-index everything
 ```
 
 ## MCP server

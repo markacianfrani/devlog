@@ -66,7 +66,7 @@ export function writeJsonl(filePath: string, lines: Array<Record<string, unknown
   fs.writeFileSync(filePath, content);
 }
 
-export function runArchive(home: string, args: string[] = []) {
+export function runArchive(home: string, args: string[] = ["archive"]) {
   return Bun.spawnSync({
     cmd: ["bun", BIN_PATH, ...args],
     cwd: REPO_ROOT,

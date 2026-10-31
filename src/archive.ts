@@ -9,6 +9,10 @@ import {
   printArchiveHeader,
   printArchiveSummary,
   printIndexSummary,
+  printRunArchiveRows,
+  printRunArchiveStage,
+  printRunIndexResult,
+  printRunIndexStage,
   ProgressReporter,
   type CliOptions,
   type SourceSummary,
@@ -24,7 +28,7 @@ function isExcluded(source: Source): boolean {
   return config.excludeSources.includes(source);
 }
 
-export async function archiveMain(options: CliOptions = DEFAULT_CLI_OPTIONS) {
+export async function archiveMain(options: CliOptions = DEFAULT_CLI_OPTIONS, combined = false) {
   const startedAt = Date.now();
   const progress = new ProgressReporter(options);
 
@@ -32,7 +36,9 @@ export async function archiveMain(options: CliOptions = DEFAULT_CLI_OPTIONS) {
   ensureDir(PROJECTS_ARCHIVE_DIR);
 
   const summaries: SourceSummary[] = [];
-  printArchiveHeader(ARCHIVE_DIR, options);
+  if (!combined) {
+    printArchiveHeader(ARCHIVE_DIR, options);
+  }
 
   for (const source of SOURCES) {
     if (!isExcluded(source)) {
@@ -40,18 +46,26 @@ export async function archiveMain(options: CliOptions = DEFAULT_CLI_OPTIONS) {
     }
   }
 
-  printArchiveSummary(summaries, ARCHIVE_DIR, Date.now() - startedAt);
+  if (combined) {
+    printRunArchiveRows(summaries);
+  } else {
+    printArchiveSummary(summaries, ARCHIVE_DIR, Date.now() - startedAt);
+  }
   progress.flushWarnings();
 }
 
-export async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_CLI_OPTIONS) {
+export async function indexMain(
+  rebuild: boolean,
+  options: CliOptions = DEFAULT_CLI_OPTIONS,
+  combined = false,
+) {
   const { getDb, resetDb } = await import("./db.ts");
   const { indexAll } = await import("./indexer.ts");
   const startedAt = Date.now();
   const progress = new ProgressReporter(options);
   const dbPath = config.dbPath;
 
-  if (options.verbose) {
+  if (options.verbose && !combined) {
     console.log(
       rebuild ? "🔄 Rebuilding index from scratch...\n" : "🔄 Indexing archived sessions...\n",
     );
@@ -88,6 +102,18 @@ export async function indexMain(rebuild: boolean, options: CliOptions = DEFAULT_
   });
   progress.end();
 
-  printIndexSummary(stats, dbPath, Date.now() - startedAt);
+  if (!combined) {
+    printIndexSummary(stats, dbPath, Date.now() - startedAt);
+  }
   progress.flushWarnings();
+  return stats;
+}
+
+export async function runMain(options: CliOptions = DEFAULT_CLI_OPTIONS, rebuild = false) {
+  const startedAt = Date.now();
+  printRunArchiveStage(ARCHIVE_DIR);
+  await archiveMain(options, true);
+  printRunIndexStage(rebuild);
+  const stats = await indexMain(rebuild, options, true);
+  printRunIndexResult(stats, Date.now() - startedAt);
 }

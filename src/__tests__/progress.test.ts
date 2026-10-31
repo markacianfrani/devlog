@@ -39,6 +39,17 @@ test("live progress animates without moving the result column", () => {
   expect(live.indexOf("copied")).toBe(done.indexOf("copied"));
 });
 
+test("a single session stays aligned with plural rows", () => {
+  const one = plain(
+    formatProgressRow({ label: "Claude", processed: 1, total: 1, archived: 1 }, true, 80),
+  );
+  const many = plain(
+    formatProgressRow({ label: "Claude", processed: 9, total: 9, archived: 1 }, true, 80),
+  );
+  expect(one).toContain("1 session");
+  expect(one.indexOf("copied")).toBe(many.indexOf("copied"));
+});
+
 test("index progress says indexed rather than copied", () => {
   const row = plain(
     formatProgressRow({ label: "index", processed: 2, total: 2, archived: 1 }, true),

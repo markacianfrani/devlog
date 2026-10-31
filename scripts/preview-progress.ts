@@ -5,6 +5,9 @@ import {
   printArchiveHeader,
   printArchiveSummary,
   printIndexSummary,
+  printRunArchiveStage,
+  printRunIndexResult,
+  printRunIndexStage,
   ProgressReporter,
   type SourceSummary,
 } from "../src/progress.ts";
@@ -26,6 +29,7 @@ if (!["archive", "index", "both"].includes(mode) || !Number.isSafeInteger(count)
 
 const options = { verbose: false, debug: false };
 const destination = "/tmp/fart-transcripts";
+const runStartedAt = Date.now();
 
 async function simulate(label: string, total: number) {
   const progress = new ProgressReporter(options);
@@ -52,7 +56,11 @@ async function simulate(label: string, total: number) {
 
 if (mode === "archive" || mode === "both") {
   const startedAt = Date.now();
-  printArchiveHeader(destination, options);
+  if (mode === "both") {
+    printRunArchiveStage(destination);
+  } else {
+    printArchiveHeader(destination, options);
+  }
   const sources = [
     { label: "Claude", total: 2 + Math.floor(Math.random() * 8) },
     { label: "opencode", total: 120 + Math.floor(Math.random() * 500) },
@@ -72,18 +80,26 @@ if (mode === "archive" || mode === "both") {
     });
   }
 
-  printArchiveSummary(summaries, destination, Date.now() - startedAt);
+  if (mode === "archive") {
+    printArchiveSummary(summaries, destination, Date.now() - startedAt);
+  }
 }
 
 if (mode === "index" || mode === "both") {
   if (mode === "both") {
-    console.log("");
+    printRunIndexStage();
   }
   const startedAt = Date.now();
   const { changed, skipped, messages } = await simulate("index", count);
-  printIndexSummary(
-    { sessionsIndexed: changed, sessionsSkipped: skipped, messagesIndexed: messages, errors: 0 },
-    `${destination}/index.db`,
-    Date.now() - startedAt,
-  );
+  const stats = {
+    sessionsIndexed: changed,
+    sessionsSkipped: skipped,
+    messagesIndexed: messages,
+    errors: 0,
+  };
+  if (mode === "both") {
+    printRunIndexResult(stats, Date.now() - runStartedAt);
+  } else {
+    printIndexSummary(stats, `${destination}/index.db`, Date.now() - startedAt);
+  }
 }

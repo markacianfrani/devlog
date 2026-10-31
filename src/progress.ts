@@ -100,13 +100,14 @@ export function formatProgressRow(
   const displayLabel = label === "Claude" ? "claude code" : label;
   const name = `${tint(theme.icon, theme.color)} ${bold(displayLabel)}`;
   const action = label === "index" ? "indexed" : "copied";
+  const unit = processed === 1 ? "session" : "sessions";
 
   if (columns < 58 || displayLabel.length > 11 || count.length > 13) {
-    return `${status} ${name}  ${dim(count)} sessions  ${archived} ${action}`;
+    return `${status} ${name}  ${dim(count)} ${unit}  ${archived} ${action}`;
   }
 
   const source = `${tint(theme.icon, theme.color)} ${bold(displayLabel.padEnd(11))}`;
-  return `${status} ${source}  ${dim(count.padStart(13))} sessions  ${success(String(archived).padStart(7))} ${action}`;
+  return `${status} ${source}  ${dim(count.padStart(13))} ${unit.padEnd(8)}  ${success(String(archived).padStart(7))} ${action}`;
 }
 
 export function formatIndexedTarget(filePath: string, archiveDir: string) {
@@ -249,19 +250,74 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function displayDestination(archiveDir: string) {
+  const home = os.homedir();
+  return archiveDir === home
+    ? "~"
+    : archiveDir.startsWith(`${home}${path.sep}`)
+      ? `~${archiveDir.slice(home.length)}`
+      : archiveDir;
+}
+
 export function printArchiveHeader(archiveDir: string, options: CliOptions) {
   if (!isInteractiveTerminal() || options.verbose) {
     return;
   }
 
-  const home = os.homedir();
-  const destination =
-    archiveDir === home
-      ? "~"
-      : archiveDir.startsWith(`${home}${path.sep}`)
-        ? `~${archiveDir.slice(home.length)}`
-        : archiveDir;
-  console.log(`  ${dim("transcripts")}  ${tint("→", 36)}  ${bold(destination)}\n`);
+  console.log(
+    `  ${dim("transcripts")}  ${tint("→", 36)}  ${bold(displayDestination(archiveDir))}\n`,
+  );
+}
+
+export function printRunArchiveStage(archiveDir: string) {
+  console.log(`${bold("[1/2] Archive transcripts")} to ${displayDestination(archiveDir)}\n`);
+}
+
+export function printRunIndexStage(rebuild = false) {
+  console.log(
+    `\n${bold(rebuild ? "[2/2] Rebuild search index" : "[2/2] Index sessions for search")}\n`,
+  );
+}
+
+export function printRunArchiveRows(summaries: SourceSummary[]) {
+  if (isInteractiveTerminal()) {
+    return;
+  }
+
+  for (const summary of summaries) {
+    const processed = summary.archived + summary.skipped;
+    console.log(
+      `  ${formatProgressRow({ label: summary.label, processed, total: processed, archived: summary.archived }, true)}`,
+    );
+  }
+}
+
+export function printRunIndexResult(
+  stats: {
+    sessionsIndexed: number;
+    sessionsSkipped: number;
+    messagesIndexed: number;
+    errors: number;
+    warnings?: number;
+  },
+  durationMs: number,
+) {
+  if (!isInteractiveTerminal()) {
+    const processed = stats.sessionsIndexed + stats.sessionsSkipped;
+    console.log(
+      `  ${formatProgressRow({ label: "index", processed, total: processed, archived: stats.sessionsIndexed }, true)}`,
+    );
+  }
+  console.log(
+    `  ${stats.messagesIndexed} ${stats.messagesIndexed === 1 ? "message" : "messages"} indexed`,
+  );
+  if ((stats.warnings ?? 0) > 0) {
+    console.log(`  Warnings: ${stats.warnings}`);
+  }
+  if (stats.errors > 0) {
+    console.log(`  Errors: ${stats.errors}`);
+  }
+  console.log(`\n${dim(`Done in ${formatDuration(durationMs)}`)}`);
 }
 
 export function printArchiveSummary(

@@ -8,15 +8,17 @@ import { type CliOptions } from "./progress.ts";
 
 const HELP_TEXT = `Usage: devlog [archive|index|mcp|init|version] [options]
 
+Running devlog without a command archives transcripts, then indexes them for search.
+
 Commands:
-  archive    Archive Claude Code, opencode, and pi sessions (default)
+  archive    Copy Claude Code, opencode, and pi sessions into the archive
   index      Index archived sessions into SQLite database
   mcp        Start the MCP server (stdio)
   init       Set up devlog and install MCP servers
   version    Print the installed devlog version
 
 Options:
-  --rebuild  (index only) Re-index all sessions, ignoring cache
+  --rebuild  Re-index all sessions during devlog or index, ignoring cache
   --verbose  Show per-project and per-session details
   --debug    Include noisy debug logs
   --version  Print the installed devlog version
@@ -48,13 +50,18 @@ async function main() {
     return;
   }
 
-  const command = args.find((arg) => !arg.startsWith("--")) ?? "archive";
+  const command = args.find((arg) => !arg.startsWith("--")) ?? "run";
   const options: CliOptions = {
     verbose: args.includes("--verbose"),
     debug: args.includes("--debug"),
   };
 
   switch (command) {
+    case "run": {
+      const { runMain } = await import("./archive.ts");
+      await runMain(options, args.includes("--rebuild"));
+      break;
+    }
     case "archive": {
       const { archiveMain } = await import("./archive.ts");
       await archiveMain(options);

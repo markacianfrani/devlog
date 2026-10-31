@@ -93,21 +93,19 @@ export function formatProgressRow(
   const theme = sourceTheme(label);
   const status = done
     ? success("✓")
-    : tint(SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? "•", theme.color);
+    : label === "Claude"
+      ? dim(SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? "•")
+      : tint(SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? "•", theme.color);
   const count = !done && total > 0 ? `${processed}/${total}` : String(processed);
-  const displayLabel = label === "Claude" ? "claude code" : label === "pi" ? "" : label;
-  const styledLabel = (text: string) =>
-    label === "Claude" ? ansi("1;38;5;208", text) : bold(text);
-  const name = displayLabel
-    ? `${tint(theme.icon, theme.color)} ${styledLabel(displayLabel)}`
-    : tint(theme.icon, theme.color);
+  const displayLabel = label === "Claude" ? "claude code" : label;
+  const name = `${tint(theme.icon, theme.color)} ${bold(displayLabel)}`;
   const action = label === "index" ? "indexed" : "copied";
 
   if (columns < 58 || displayLabel.length > 11 || count.length > 13) {
     return `${status} ${name}  ${dim(count)} sessions  ${archived} ${action}`;
   }
 
-  const source = `${tint(theme.icon, theme.color)} ${styledLabel(displayLabel.padEnd(11))}`;
+  const source = `${tint(theme.icon, theme.color)} ${bold(displayLabel.padEnd(11))}`;
   return `${status} ${source}  ${dim(count.padStart(13))} sessions  ${success(String(archived).padStart(7))} ${action}`;
 }
 

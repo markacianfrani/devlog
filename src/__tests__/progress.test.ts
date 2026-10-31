@@ -16,6 +16,7 @@ test("short and long completed rows use the same columns", () => {
   expect(new Set(rows.map((row) => row.indexOf("copied"))).size).toBe(1);
   expect(rows[0]).toContain("✦ claude code");
   expect(rows[0]).toContain("9 sessions");
+  expect(rows[2]).toContain("π pi");
   expect(rows[2]).toContain("15000 sessions");
   for (const row of rows) {
     expect(row).not.toContain("unchanged");
@@ -48,5 +49,5 @@ test("index progress says indexed rather than copied", () => {
 
 test("narrow terminals use a compact row", () => {
   const state = { label: "pi", processed: 15000, total: 15000, archived: 1364 };
-  expect(plain(formatProgressRow(state, true, 40))).toBe("✓ π  15000 sessions  1364 copied");
+  expect(plain(formatProgressRow(state, true, 40))).toBe("✓ π pi  15000 sessions  1364 copied");
 });

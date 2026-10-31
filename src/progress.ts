@@ -81,42 +81,29 @@ function sourceTheme(label: string) {
   return SOURCE_THEME[label] ?? { icon: "•", color: 39 };
 }
 
-// Keep the completed rows and the live row on the same column grid. The progress
-// bar used to take up space without conveying anything once a source finished.
+// A completed source only needs its session count and the number copied/indexed.
+// The in-flight row uses the same columns, with a fraction in the session slot.
 export function formatProgressRow(
-  state: Pick<ProgressState, "label" | "processed" | "total" | "archived" | "skipped">,
+  state: Pick<ProgressState, "label" | "processed" | "total" | "archived">,
   done: boolean,
   columns = terminalColumns(),
   frame = 0,
 ) {
-  const { label, processed, total, archived, skipped } = state;
+  const { label, processed, total, archived } = state;
   const theme = sourceTheme(label);
   const status = done
     ? success("✓")
     : tint(SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? "•", theme.color);
-  const count = total > 0 ? `${processed}/${total}` : String(processed);
+  const count = !done && total > 0 ? `${processed}/${total}` : String(processed);
   const name = `${tint(theme.icon, theme.color)} ${bold(label)}`;
   const action = label === "index" ? "indexed" : "copied";
-  const compact = `${status} ${name}  ${dim(count)}  ${archived} ${action}  ${skipped} same`;
 
-  // Don't wrap the live row in narrow terminals or let large counts break the grid.
-  if (
-    columns < 73 ||
-    label.length > 8 ||
-    count.length > 9 ||
-    String(archived).length > 5 ||
-    String(skipped).length > 6
-  ) {
-    return compact;
+  if (columns < 55 || label.length > 8 || count.length > 13) {
+    return `${status} ${name}  ${dim(count)} sessions  ${archived} ${action}`;
   }
 
   const source = `${tint(theme.icon, theme.color)} ${bold(label.padEnd(8))}`;
-  const results = `${success(String(archived).padStart(5))} ${action}  ${String(skipped).padStart(6)} unchanged`;
-  return `${status} ${source}  ${dim(count.padStart(9))} checked  ${results}`;
-}
-
-function pluralize(count: number, singular: string, plural = `${singular}s`) {
-  return count === 1 ? singular : plural;
+  return `${status} ${source}  ${dim(count.padStart(13))} sessions  ${success(String(archived).padStart(7))} ${action}`;
 }
 
 export function formatIndexedTarget(filePath: string, archiveDir: string) {
@@ -302,8 +289,7 @@ export function printArchiveSummary(
     return;
   }
 
-  console.log(`\n  ${bold("devlog archive")}  ${dim(formatDuration(durationMs))}`);
-  console.log(`  ${success(String(totalArchived))} copied  ${dim("·")}  ${totalSkipped} unchanged`);
+  console.log(`\n  ${dim(`Done in ${formatDuration(durationMs)}`)}`);
   if (totalWarnings > 0) {
     console.log(`  ${bold("Warnings")} ${totalWarnings}`);
   }
@@ -335,9 +321,8 @@ export function printIndexSummary(
     return;
   }
 
-  console.log(`\n  ${bold("devlog index")}  ${dim(formatDuration(durationMs))}`);
   console.log(
-    `  ${success(String(stats.sessionsIndexed))} ${pluralize(stats.sessionsIndexed, "session")} indexed  ${dim("·")}  ${stats.sessionsSkipped} unchanged  ${dim("·")}  ${stats.messagesIndexed} messages`,
+    `\n  ${dim(`Done in ${formatDuration(durationMs)}`)}  ${dim("·")}  ${stats.messagesIndexed} messages indexed`,
   );
   console.log(`  ${dim(`Database: ${dbPath}`)}`);
   if ((stats.warnings ?? 0) > 0) {

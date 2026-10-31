@@ -29,8 +29,8 @@ interface ProgressState {
 
 const SPINNER_FRAMES = ["◐", "◓", "◑", "◒"];
 
-const SOURCE_THEME: Record<string, { icon: string; color: number }> = {
-  Claude: { icon: "✦", color: 33 },
+const SOURCE_THEME: Record<string, { icon: string; color: number | string }> = {
+  Claude: { icon: "✦", color: "38;5;208" },
   opencode: { icon: "◈", color: 36 },
   pi: { icon: "π", color: 35 },
   index: { icon: "⌕", color: 32 },
@@ -45,7 +45,7 @@ function terminalColumns() {
   return columns > 0 ? columns : 80;
 }
 
-function ansi(code: number, text: string) {
+function ansi(code: number | string, text: string) {
   if (!isInteractiveTerminal()) {
     return text;
   }
@@ -73,7 +73,7 @@ function terminalLink(label: string, url: string) {
   return `\u001B]8;;${url}\u0007${label}\u001B]8;;\u0007`;
 }
 
-function tint(text: string, color: number) {
+function tint(text: string, color: number | string) {
   return ansi(color, text);
 }
 
@@ -95,17 +95,19 @@ export function formatProgressRow(
     ? success("✓")
     : tint(SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? "•", theme.color);
   const count = !done && total > 0 ? `${processed}/${total}` : String(processed);
-  const name =
-    label === "pi"
-      ? tint(theme.icon, theme.color)
-      : `${tint(theme.icon, theme.color)} ${bold(label)}`;
+  const displayLabel = label === "Claude" ? "claude code" : label === "pi" ? "" : label;
+  const styledLabel = (text: string) =>
+    label === "Claude" ? ansi("1;38;5;208", text) : bold(text);
+  const name = displayLabel
+    ? `${tint(theme.icon, theme.color)} ${styledLabel(displayLabel)}`
+    : tint(theme.icon, theme.color);
   const action = label === "index" ? "indexed" : "copied";
 
-  if (columns < 55 || label.length > 8 || count.length > 13) {
+  if (columns < 58 || displayLabel.length > 11 || count.length > 13) {
     return `${status} ${name}  ${dim(count)} sessions  ${archived} ${action}`;
   }
 
-  const source = `${tint(theme.icon, theme.color)} ${bold((label === "pi" ? "" : label).padEnd(8))}`;
+  const source = `${tint(theme.icon, theme.color)} ${styledLabel(displayLabel.padEnd(11))}`;
   return `${status} ${source}  ${dim(count.padStart(13))} sessions  ${success(String(archived).padStart(7))} ${action}`;
 }
 
@@ -278,7 +280,7 @@ export function printArchiveSummary(
 
     for (const summary of summaries) {
       console.log(
-        `${summary.label.padEnd(8)} ${summary.archived} updated, ${summary.skipped} skipped`,
+        `${(summary.label === "Claude" ? "claude code" : summary.label).padEnd(11)} ${summary.archived} updated, ${summary.skipped} skipped`,
       );
     }
 

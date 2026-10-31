@@ -14,6 +14,7 @@ test("short and long completed rows use the same columns", () => {
 
   expect(new Set(rows.map((row) => row.indexOf("sessions"))).size).toBe(1);
   expect(new Set(rows.map((row) => row.indexOf("copied"))).size).toBe(1);
+  expect(rows[0]).toContain("✦ claude code");
   expect(rows[0]).toContain("9 sessions");
   expect(rows[2]).toContain("15000 sessions");
   for (const row of rows) {

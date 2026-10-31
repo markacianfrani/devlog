@@ -32,7 +32,7 @@ const SPINNER_FRAMES = ["◐", "◓", "◑", "◒"];
 const SOURCE_THEME: Record<string, { icon: string; color: number }> = {
   Claude: { icon: "✦", color: 33 },
   opencode: { icon: "◈", color: 36 },
-  pi: { icon: "◌", color: 35 },
+  pi: { icon: "π", color: 35 },
   index: { icon: "⌕", color: 32 },
 };
 
@@ -95,14 +95,17 @@ export function formatProgressRow(
     ? success("✓")
     : tint(SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? "•", theme.color);
   const count = !done && total > 0 ? `${processed}/${total}` : String(processed);
-  const name = `${tint(theme.icon, theme.color)} ${bold(label)}`;
+  const name =
+    label === "pi"
+      ? tint(theme.icon, theme.color)
+      : `${tint(theme.icon, theme.color)} ${bold(label)}`;
   const action = label === "index" ? "indexed" : "copied";
 
   if (columns < 55 || label.length > 8 || count.length > 13) {
     return `${status} ${name}  ${dim(count)} sessions  ${archived} ${action}`;
   }
 
-  const source = `${tint(theme.icon, theme.color)} ${bold(label.padEnd(8))}`;
+  const source = `${tint(theme.icon, theme.color)} ${bold((label === "pi" ? "" : label).padEnd(8))}`;
   return `${status} ${source}  ${dim(count.padStart(13))} sessions  ${success(String(archived).padStart(7))} ${action}`;
 }
 

@@ -47,5 +47,5 @@ test("index progress says indexed rather than copied", () => {
 
 test("narrow terminals use a compact row", () => {
   const state = { label: "pi", processed: 15000, total: 15000, archived: 1364 };
-  expect(plain(formatProgressRow(state, true, 40))).toBe("✓ ◌ pi  15000 sessions  1364 copied");
+  expect(plain(formatProgressRow(state, true, 40))).toBe("✓ π  15000 sessions  1364 copied");
 });

@@ -271,7 +271,7 @@ export function printArchiveHeader(archiveDir: string, options: CliOptions) {
       : archiveDir.startsWith(`${home}${path.sep}`)
         ? `~${archiveDir.slice(home.length)}`
         : archiveDir;
-  console.log(`  ${dim("sessions")}  ${tint("───→", 36)}  ${bold(destination)}\n`);
+  console.log(`  ${dim("transcripts")}  ${tint("→", 36)}  ${bold(destination)}\n`);
 }
 
 export function printArchiveSummary(

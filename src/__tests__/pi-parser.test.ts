@@ -200,6 +200,48 @@ describe("Pi parser", () => {
     ]);
   });
 
+  test("custom-role message strings parse through the custom-message wrapper", async () => {
+    const result = expectParsed(
+      await parsePiSession(path.join(FIXTURES_DIR, "pi-custom-role.jsonl"), "test-project"),
+    );
+    const msg = result.messages.find((m) => m.id === "cr1");
+    const content: ContentBlock[] = msg?.content ?? [];
+    const text = content.find((b): b is TextContentBlock => b.type === "text")?.text;
+    expect(msg?.role).toBe("user");
+    expect(text).toContain('<pi:custom-message customType="fart-kernel">');
+    expect(text).toContain("i am the fart kernel");
+  });
+
+  test("custom-role arrays keep their blocks and arbitrary JSON content stays searchable", async () => {
+    const result = expectParsed(
+      await parsePiSession(path.join(FIXTURES_DIR, "pi-custom-role.jsonl"), "test-project"),
+    );
+
+    const cr2 = result.messages.find((m) => m.id === "cr2")?.content ?? [];
+    const cr2Texts = cr2.filter((b): b is TextContentBlock => b.type === "text").map((b) => b.text);
+    expect(cr2Texts.some((t) => t.includes('customType="fart-shards"'))).toBe(true);
+    expect(cr2Texts).toContain("shard one fart");
+    expect(
+      cr2.filter((b) => b.type === "image").map((b) => (b as { mediaType?: string }).mediaType),
+    ).toEqual(["image/png"]);
+
+    // Augmented hosts can put any JSON on content; it is serialized, not dropped.
+    const cr3Content: ContentBlock[] = result.messages.find((m) => m.id === "cr3")?.content ?? [];
+    const cr3Text = cr3Content.find((b): b is TextContentBlock => b.type === "text")?.text;
+    expect(cr3Text).toContain('customType="fart-registry"');
+    expect(cr3Text).toContain("Fart Pattern");
+    expect(cr3Text).toContain("Compound Farting");
+  });
+
+  test("custom-role messages produce no warnings", async () => {
+    const outcome = await parsePiSession(
+      path.join(FIXTURES_DIR, "pi-custom-role.jsonl"),
+      "test-project",
+    );
+    expectParsed(outcome);
+    expect(outcome.warnings).toEqual([]);
+  });
+
   test("returns structured warnings for unknown pi record types", async () => {
     const filePath = path.join(FIXTURES_DIR, "pi-unknown-record.jsonl");
     const outcome = await parsePiSession(filePath, "test-project");

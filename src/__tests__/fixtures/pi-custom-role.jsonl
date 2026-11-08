@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"pi-custom-role","timestamp":"2026-03-15T21:00:00.000Z","cwd":"/home/user/project"}
+{"type":"message","id":"u1","parentId":null,"timestamp":"2026-03-15T21:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"store your fart identity"}]}}
+{"type":"message","id":"cr1","parentId":"u1","timestamp":"2026-03-15T21:00:02.000Z","message":{"role":"custom","customType":"fart-kernel","content":"i am the fart kernel","display":true,"details":{}}}
+{"type":"message","id":"cr2","parentId":"cr1","timestamp":"2026-03-15T21:00:03.000Z","message":{"role":"custom","customType":"fart-shards","content":[{"type":"text","text":"shard one fart"},{"type":"image","mimeType":"image/png"}],"display":true}}
+{"type":"message","id":"cr3","parentId":"cr2","timestamp":"2026-03-15T21:00:04.000Z","message":{"role":"custom","customType":"fart-registry","content":{"name":"Fart Pattern","principles":["Compound Farting","Silent Persistence"]},"display":true}}
+{"type":"message","id":"a1","parentId":"cr3","timestamp":"2026-03-15T21:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"stored"}],"model":"gpt-5.4"}}

@@ -18,6 +18,8 @@ export interface SessionRow {
   created_at: string | null;
   updated_at: string | null;
   parent_session_id: string | null;
+  relation_kind: "fork" | "subagent" | null;
+  parent_file_path: string | null;
   mtime: number;
 }
 
@@ -87,7 +89,7 @@ export interface ArtifactLinkRow {
   artifact_url: string;
   timestamp: string | null;
 }
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 const DEFAULT_DB_PATH = DEFAULTS.dbPath;
 
 let db: Database | undefined;
@@ -111,12 +113,21 @@ CREATE TABLE IF NOT EXISTS sessions (
 	created_at TEXT,
 	updated_at TEXT,
 	parent_session_id TEXT,
+	relation_kind TEXT CHECK(relation_kind IN ('fork', 'subagent')),
+	-- Resolved parent transcript, written by the indexer only after every file is
+	-- indexed: session_id is NOT unique (a claude fork or subagent shares its
+	-- parent's id), so it is set only when exactly one same-project, same-source,
+	-- non-self session matches the child's raw parent_session_id. Deliberately no
+	-- foreign key: the pointer is recomputed on each index run, and a cascade
+	-- would delete children whenever a parent file is reindexed.
+	parent_file_path TEXT,
 	mtime INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_parent_file_path ON sessions(parent_file_path);
 
 -- 1:1 side table for sessions running inside a git worktree.
 -- worktree_path + worktree_name are always present when the row exists; the rest

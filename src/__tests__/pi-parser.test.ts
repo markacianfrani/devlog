@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { parsePiSession } from "../parsers/pi.ts";
@@ -25,6 +27,181 @@ function expectParsed(outcome: ParseOutcome): ParseResult {
 }
 
 describe("Pi parser", () => {
+  test("recovers an older child's parent from its archived run path, not its task text", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fart-pi-child-"));
+    const parentId = "11111111-2222-4333-8444-555555555555";
+    const childFile = path.join(dir, `2026-01-01T00-00-00-000Z_${parentId}__fart-run__run-0.jsonl`);
+    fs.writeFileSync(
+      childFile,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "child-id",
+          timestamp: "2026-01-01T00:00:00Z",
+          cwd: "/tmp/fart",
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "user-1",
+          timestamp: "2026-01-01T00:00:01Z",
+          message: { role: "user", content: [{ type: "text", text: "fart task" }] },
+        }),
+      ].join("\n"),
+    );
+    try {
+      const result = expectParsed(await parsePiSession(childFile, "fart-project"));
+      expect(result.meta.parentSessionId).toBe(parentId);
+      expect(result.meta.relationKind).toBe("subagent");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("treats an empty parentSession header as absent and falls back to the archive path", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fart-pi-empty-parent-"));
+    const parentId = "11111111-2222-4333-8444-555555555555";
+    const childFile = path.join(dir, `2026-01-01T00-00-00-000Z_${parentId}__fart-run__run-0.jsonl`);
+    fs.writeFileSync(
+      childFile,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "child-id",
+          timestamp: "2026-01-01T00:00:00Z",
+          cwd: "/tmp/fart",
+          parentSession: "",
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "user-1",
+          timestamp: "2026-01-01T00:00:01Z",
+          message: { role: "user", content: [{ type: "text", text: "fart task" }] },
+        }),
+      ].join("\n"),
+    );
+    try {
+      const result = expectParsed(await parsePiSession(childFile, "fart-project"));
+      expect(result.meta.parentSessionId).toBe(parentId);
+      expect(result.meta.relationKind).toBe("subagent");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a Pi parent header without extension evidence remains unclassified", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fart-pi-parent-"));
+    const file = path.join(dir, "child.jsonl");
+    fs.writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "child-id",
+          timestamp: "2026-01-01T00:00:00Z",
+          cwd: "/tmp/fart",
+          parentSession: "/sessions/parent_11111111-2222-4333-8444-555555555555.jsonl",
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "user-1",
+          timestamp: "2026-01-01T00:00:01Z",
+          message: { role: "user", content: [{ type: "text", text: "continue" }] },
+        }),
+      ].join("\n"),
+    );
+    try {
+      const result = expectParsed(await parsePiSession(file, "fart-project"));
+      expect(result.meta.parentSessionId).toContain("11111111-2222-4333-8444-555555555555");
+      expect(result.meta.relationKind).toBeUndefined();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not treat tool results as session relationship evidence", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fart-pi-runs-"));
+    const file = path.join(dir, "parent.jsonl");
+    const runId = "12345678-1234-4234-8234-123456789abc";
+    fs.writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "parent-id",
+          timestamp: "2026-01-01T00:00:00Z",
+          cwd: "/tmp/fart",
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "user",
+          timestamp: "2026-01-01T00:00:01Z",
+          message: { role: "user", content: [{ type: "text", text: "fart task" }] },
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "assistant",
+          timestamp: "2026-01-01T00:00:02Z",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                id: "call-1",
+                name: "subagent",
+                arguments: { agent: "fart-reviewer", async: true, task: "fart task" },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "result",
+          timestamp: "2026-01-01T00:00:03Z",
+          message: {
+            role: "toolResult",
+            toolName: "subagent",
+            toolCallId: "call-1",
+            content: [{ type: "text", text: "launched" }],
+            details: { mode: "single", runId, results: [] },
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "unrelated",
+          timestamp: "2026-01-01T00:00:04Z",
+          message: {
+            role: "toolResult",
+            toolName: "workflow",
+            toolCallId: "call-2",
+            content: [{ type: "text", text: "finished" }],
+            details: {
+              name: "fart_workflow",
+              agents: [{ label: "review" }],
+              workflowChildren: {
+                version: 1,
+                parentToolCallId: "call-2",
+                workflowRunId: runId,
+                children: [{ agent: "wrong-agent", runId }],
+              },
+            },
+          },
+        }),
+      ].join("\n"),
+    );
+    try {
+      const result = expectParsed(await parsePiSession(file, "fart-project"));
+      expect(result.meta.parentSessionId).toBeUndefined();
+      expect(result.meta.relationKind).toBeUndefined();
+      expect(result.messages).toHaveLength(4);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("parses pi session format", async () => {
     const result = expectParsed(
       await parsePiSession(path.join(FIXTURES_DIR, "pi-simple.jsonl"), "test-project"),

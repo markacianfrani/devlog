@@ -122,7 +122,16 @@ export interface WorktreeInfo {
   originalHeadCommit?: string;
 }
 
-export interface SessionMeta {
+type ParentRelationship =
+  | { parentSessionId?: undefined; relationKind?: never }
+  | {
+      /** Raw producer pointer, often an ID or a path containing it; never inferred. */
+      parentSessionId: string;
+      /** Only producer evidence classifies the relationship. */
+      relationKind?: "fork" | "subagent";
+    };
+
+export type SessionMeta = {
   id: string;
   source: Source;
   project: string;
@@ -131,9 +140,8 @@ export interface SessionMeta {
   model?: string;
   createdAt?: string;
   updatedAt?: string;
-  parentSessionId?: string;
   worktree?: WorktreeInfo;
-}
+} & ParentRelationship;
 
 export interface PrLink {
   sessionId: string;
@@ -210,6 +218,7 @@ export interface SessionMetaDraft {
   createdAt?: string;
   updatedAt?: string;
   parentSessionId?: string;
+  relationKind?: "fork" | "subagent";
   worktree?: WorktreeInfo;
 }
 
@@ -310,7 +319,7 @@ export function createSessionMeta(draft: SessionMetaDraft): SessionMeta | undefi
     return undefined;
   }
 
-  return {
+  const meta = {
     id: draft.id,
     source: draft.source,
     project: draft.project,
@@ -319,9 +328,15 @@ export function createSessionMeta(draft: SessionMetaDraft): SessionMeta | undefi
     ...(draft.model && { model: draft.model }),
     ...(draft.createdAt && { createdAt: draft.createdAt }),
     ...(draft.updatedAt && { updatedAt: draft.updatedAt }),
-    ...(draft.parentSessionId && { parentSessionId: draft.parentSessionId }),
     ...(draft.worktree && { worktree: draft.worktree }),
   };
+  return isNonEmptyString(draft.parentSessionId)
+    ? {
+        ...meta,
+        parentSessionId: draft.parentSessionId,
+        ...(draft.relationKind && { relationKind: draft.relationKind }),
+      }
+    : meta;
 }
 
 export function createPrLink(draft: PrLinkDraft): PrLink | undefined {
@@ -384,5 +399,10 @@ export function finalizeParseResult(draft: ParseResultDraft): ParseResult | unde
 
   const prLinks = draft.prLinks.filter((link) => link.sessionId === meta.id);
   const artifactLinks = draft.artifactLinks.filter((link) => link.sessionId === meta.id);
-  return { meta, messages, prLinks, artifactLinks };
+  return {
+    meta,
+    messages,
+    prLinks,
+    artifactLinks,
+  };
 }

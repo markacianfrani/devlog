@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { Source } from "./config.ts";
+import { piParentArchiveName } from "./parsers/pi-relationships.ts";
 import { isSource, type ParseResult, type ParseWarning } from "./parsers/types.ts";
 import {
   createIndexRedactionContext,
@@ -88,8 +89,8 @@ function toSqlValue<T>(value: T | undefined): T | null {
 
 function insertSession(db: Database, result: ParseResult, filePath: string, mtime: number) {
   db.run(
-    `INSERT INTO sessions (file_path, session_id, source, project, cwd, title, model, created_at, updated_at, parent_session_id, mtime)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO sessions (file_path, session_id, source, project, cwd, title, model, created_at, updated_at, parent_session_id, relation_kind, parent_file_path, mtime)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
     [
       filePath,
       result.meta.id,
@@ -101,6 +102,7 @@ function insertSession(db: Database, result: ParseResult, filePath: string, mtim
       toSqlValue(result.meta.createdAt),
       toSqlValue(result.meta.updatedAt),
       toSqlValue(result.meta.parentSessionId),
+      toSqlValue(result.meta.relationKind),
       mtime,
     ],
   );
@@ -345,6 +347,124 @@ function getProjectAndSource(
   return { project, source };
 }
 
+// A raw parent pointer is stored producer evidence: usually the parent's session
+// id, sometimes a path to its transcript. Extract only the final UUID from a
+// path, never a title, prompt, timestamp, or prose resemblance.
+function parentReferenceId(parentSessionId: string): string {
+  return (
+    parentSessionId.match(/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}/gi)?.at(-1) ??
+    parentSessionId
+  ).toLowerCase();
+}
+
+// A Claude subagent's archive directory is an exact producer-owned locator:
+// <parent UUID>/subagents/... belongs to <parent UUID>.jsonl. Siblings echo the
+// same session ID, so an ID-only lookup could choose a sibling as the parent.
+function claudeSubagentParentPath(filePath: string): string | undefined {
+  const marker = `${path.sep}subagents${path.sep}`;
+  const index = filePath.lastIndexOf(marker);
+  return index < 0 ? undefined : `${filePath.slice(0, index)}.jsonl`;
+}
+
+// Resolve only an exact transcript. Claude subagents require their archive
+// parent and an agreeing raw pointer. Pi can use a producer-owned source or
+// archive filename across worktree project slugs; otherwise require a unique
+// same-project/source ID. Recompute all links after each index run so
+// incremental and rebuild behavior converge and later conflicts clear old links.
+type SessionRow = {
+  file_path: string;
+  session_id: string;
+  source: Source;
+  project: string;
+  parent_session_id: string | null;
+};
+
+function resolveParentFilePaths(db: Database): void {
+  const sessions = db
+    .query<SessionRow, []>(
+      "SELECT file_path, session_id, source, project, parent_session_id FROM sessions",
+    )
+    .all();
+
+  const byPath = new Map(sessions.map((session) => [session.file_path, session]));
+  const bySessionId = new Map<string, SessionRow[]>();
+  for (const session of sessions) {
+    const key = session.session_id.toLowerCase();
+    const matches = bySessionId.get(key) ?? [];
+    matches.push(session);
+    bySessionId.set(key, matches);
+  }
+
+  const proposed = new Map<string, string | null>();
+  for (const child of sessions) {
+    proposed.set(child.file_path, resolveChildParent(child, byPath, bySessionId));
+  }
+
+  // Corrupt or conflicting pointers must not form a cycle.
+  unresolveCycles(proposed);
+
+  const update = db.prepare(`UPDATE sessions SET parent_file_path = ? WHERE file_path = ?`);
+  for (const child of sessions) {
+    update.run(proposed.get(child.file_path) ?? null, child.file_path);
+  }
+}
+
+// Resolve one child's parent transcript. A malformed Claude path or Pi parent
+// filename cannot fall back to another transcript merely sharing its ID.
+// Multiple matches stay unknown.
+function resolveChildParent(
+  child: SessionRow,
+  byPath: Map<string, SessionRow>,
+  bySessionId: Map<string, SessionRow[]>,
+): string | null {
+  if (!child.parent_session_id) {
+    return null;
+  }
+  const id = parentReferenceId(child.parent_session_id);
+  const archiveParent =
+    child.source === "claude" ? claudeSubagentParentPath(child.file_path) : undefined;
+  const piArchiveName =
+    child.source === "pi"
+      ? piParentArchiveName(child.file_path, child.parent_session_id)
+      : undefined;
+  if (piArchiveName === null) {
+    return null;
+  }
+  const candidates = archiveParent ? [byPath.get(archiveParent)] : (bySessionId.get(id) ?? []);
+  const matches = candidates.filter(
+    (candidate) =>
+      candidate !== undefined &&
+      fs.existsSync(candidate.file_path) &&
+      candidate.file_path !== child.file_path &&
+      candidate.session_id.toLowerCase() === id &&
+      candidate.source === child.source &&
+      (archiveParent
+        ? candidate.project === child.project
+        : piArchiveName
+          ? path.basename(candidate.file_path) === piArchiveName
+          : candidate.project === child.project),
+  );
+  return matches.length === 1 ? (matches[0]?.file_path ?? null) : null;
+}
+
+// Corrupt or conflicting pointers must not form a cycle. Leave the raw
+// references visible but unresolve every link along a path into a cycle.
+function unresolveCycles(proposed: Map<string, string | null>): void {
+  for (const start of proposed.keys()) {
+    const seen = new Set<string>();
+    let cursor: string | null = start;
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      cursor = proposed.get(cursor) ?? null;
+    }
+    if (cursor) {
+      for (const filePath of seen) {
+        proposed.set(filePath, null);
+      }
+    }
+  }
+}
+
 export async function indexAll(
   archiveDir: string,
   rebuild: boolean,
@@ -422,5 +542,6 @@ export async function indexAll(
     callbacks?.onTick?.(processed, stats);
   }
 
+  resolveParentFilePaths(db);
   return stats;
 }

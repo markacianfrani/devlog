@@ -375,6 +375,7 @@ describe("Claude parser", () => {
     try {
       const result = expectParsed(await parseClaudeSession(subagentPath, "test-project"));
       expect(result.meta.parentSessionId).toBe(parentUuid);
+      expect(result.meta.relationKind).toBe("subagent");
     } finally {
       fs.rmSync(path.join(FIXTURES_DIR, "..", "synthetic-archive"), {
         recursive: true,
@@ -396,17 +397,76 @@ describe("Claude parser", () => {
     expect(expectParsed(outcome).messages).toHaveLength(3);
   });
 
-  test("populates parentSessionId from fork-context-ref when the path has no parent", async () => {
-    const result = expectParsed(
-      await parseClaudeSession(path.join(FIXTURES_DIR, "claude-fork.jsonl"), "test-project"),
+  // Claude Code writes fork-context-ref only inside agent transcripts, to mark
+  // that the subagent's seed context was copied from parentSessionId. In a
+  // standalone root it proves no fork operation, so it must not link anything.
+  test("ignores fork-context-ref in a standalone root instead of forking", async () => {
+    const outcome = await parseClaudeSession(
+      path.join(FIXTURES_DIR, "claude-fork.jsonl"),
+      "test-project",
     );
 
-    expect(result.meta.parentSessionId).toBe("fa27fa27-fa27-4fa2-8fa2-7fa27fa27fa2");
+    const result = expectParsed(outcome);
+    expect(result.meta.parentSessionId).toBeUndefined();
+    expect(result.meta.relationKind).toBeUndefined();
+
+    const ignored = outcome.warnings.filter(
+      (w) => w.kind === "missing-field" && w.message.includes("ignored outside subagents/"),
+    );
+    expect(ignored).toHaveLength(1);
+    expect(ignored[0]?.message).toContain("fa27fa27-fa27-4fa2-8fa2-7fa27fa27fa2");
   });
 
-  // The record is what Claude wrote; the path is only an inference from the
-  // archive layout. A relocated archive must not rewrite the parent link.
-  test("fork-context-ref beats the archive path when the two disagree", async () => {
+  // Structure observed in recent Claude background Agent runs (2.1.319):
+  // agent-<agentId>.jsonl under <parent uuid>/subagents/, every record echoing
+  // the parent's sessionId with isSidechain and agentId, plus the producer's
+  // fork-context-ref header naming the same parent. The header is copied-context
+  // evidence for a subagent, so it must not flip the relation to "fork".
+  test("classifies a background Agent transcript with fork-context-ref as a subagent", async () => {
+    const parentUuid = "fa27f00d-1234-4aaa-8bbb-feedfacef00d";
+    const subagentPath = path.join(
+      FIXTURES_DIR,
+      "..",
+      "synthetic-archive",
+      "claude",
+      parentUuid,
+      "subagents",
+      "agent-fartbeef1234abcd.jsonl",
+    );
+
+    const fs = await import("node:fs");
+    fs.mkdirSync(path.dirname(subagentPath), { recursive: true });
+    fs.copyFileSync(path.join(FIXTURES_DIR, "claude-subagent-fork-context.jsonl"), subagentPath);
+
+    try {
+      const outcome = await parseClaudeSession(subagentPath, "test-project");
+      const result = expectParsed(outcome);
+
+      // The transcript echoes its parent's sessionId, so id === parentSessionId.
+      expect(result.meta.id).toBe(parentUuid);
+      expect(result.meta.parentSessionId).toBe(parentUuid);
+      expect(result.meta.relationKind).toBe("subagent");
+
+      expect(result.messages).toHaveLength(2);
+      expect(result.messages.map((m) => m.agentId)).toEqual([
+        "fartbeef1234abcd",
+        "fartbeef1234abcd",
+      ]);
+
+      // The record's parent agrees with the archive layout: nothing to warn about.
+      expect(outcome.warnings.filter((w) => w.kind === "missing-field")).toEqual([]);
+    } finally {
+      fs.rmSync(path.join(FIXTURES_DIR, "..", "synthetic-archive"), {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  // The record states its parent outright, so a relocated archive keeps the
+  // link it names -- but the transcript stays a subagent, and the disagreement
+  // with the layout it was filed under is surfaced instead of silently resolved.
+  test("keeps a conflicting fork-context-ref parent as a subagent link, with a warning", async () => {
     const pathUuid = "b0b0b0b0-1234-4abc-9def-0123456789ab";
     const subagentPath = path.join(
       FIXTURES_DIR,
@@ -423,9 +483,18 @@ describe("Claude parser", () => {
     fs.copyFileSync(path.join(FIXTURES_DIR, "claude-fork.jsonl"), subagentPath);
 
     try {
-      const result = expectParsed(await parseClaudeSession(subagentPath, "test-project"));
+      const outcome = await parseClaudeSession(subagentPath, "test-project");
+      const result = expectParsed(outcome);
       expect(result.meta.parentSessionId).toBe("fa27fa27-fa27-4fa2-8fa2-7fa27fa27fa2");
       expect(result.meta.parentSessionId).not.toBe(pathUuid);
+      expect(result.meta.relationKind).toBe("subagent");
+
+      const conflict = outcome.warnings.filter(
+        (w) => w.kind === "missing-field" && w.message.includes("conflicts with archive parent"),
+      );
+      expect(conflict).toHaveLength(1);
+      expect(conflict[0]?.message).toContain(pathUuid);
+      expect(conflict[0]?.message).toContain("fa27fa27-fa27-4fa2-8fa2-7fa27fa27fa2");
     } finally {
       fs.rmSync(path.join(FIXTURES_DIR, "..", "synthetic-archive"), {
         recursive: true,

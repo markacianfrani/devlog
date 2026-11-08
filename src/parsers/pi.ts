@@ -1,3 +1,4 @@
+import { resolvePiRelationship } from "./pi-relationships.ts";
 import {
   getFirstTextPreview,
   isObjectRecord,
@@ -49,6 +50,7 @@ interface PiAgentMessage {
   usage?: PiUsage;
   toolCallId?: string;
   toolName?: string;
+  details?: unknown;
   // bashExecution messages carry the command + output at the message level
   // instead of as content blocks.
   command?: string;
@@ -286,7 +288,11 @@ function updateStateFromHeader(state: SessionState, header: PiSessionHeader) {
   state.cwd = header.cwd ?? state.cwd;
   state.createdAt = header.timestamp ?? state.createdAt;
   state.updatedAt = header.timestamp ?? state.updatedAt;
-  state.parentSessionId = header.parentSession ?? state.parentSessionId;
+  // An empty parentSession is an absent pointer, not a reference to "": keep
+  // the previous value so archive evidence can still name the parent.
+  if (header.parentSession) {
+    state.parentSessionId = header.parentSession;
+  }
 }
 
 function updateStateFromEntry(
@@ -901,7 +907,7 @@ export async function parsePiSession(jsonlPath: string, project: string): Promis
       model: state.model,
       createdAt: state.createdAt,
       updatedAt: state.updatedAt,
-      parentSessionId: state.parentSessionId,
+      ...resolvePiRelationship(state.parentSessionId, jsonlPath),
     },
     messages: editedMessages,
     prLinks: [],

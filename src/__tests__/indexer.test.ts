@@ -89,6 +89,22 @@ async function withEnv<T>(
   }
 }
 
+const piHeader = (id: string) =>
+  JSON.stringify({
+    type: "session",
+    version: 3,
+    id,
+    timestamp: "2026-01-01T00:00:00Z",
+    cwd: "/tmp/fart-project",
+  });
+const piUser = (id: string) =>
+  JSON.stringify({
+    type: "message",
+    id,
+    timestamp: "2026-01-01T00:00:01Z",
+    message: { role: "user", content: [{ type: "text", text: "fart task" }] },
+  });
+
 describe("indexer", () => {
   let tempDir: string;
   let dbPath: string;
@@ -101,6 +117,78 @@ describe("indexer", () => {
   afterEach(() => {
     closeDb();
     fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("indexes a Pi subagent from its archived child path", async () => {
+    const parentId = "11111111-2222-4333-8444-555555555555";
+    const childId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const group = `2026-01-01T00-00-00-000Z_${parentId}`;
+    const run = "12345678-1234-4234-8234-123456789abc";
+    const projectDir = path.join(tempDir, "projects", "fart-project", "pi");
+    fs.mkdirSync(projectDir, { recursive: true });
+    const parentFile = path.join(projectDir, `${group}.jsonl`);
+    const childFile = path.join(projectDir, `${group}__${run}__run-0.jsonl`);
+    fs.writeFileSync(parentFile, [piHeader(parentId), piUser("parent-user")].join("\n"));
+    fs.writeFileSync(childFile, [piHeader(childId), piUser("child-user")].join("\n"));
+
+    const db = getDb(dbPath);
+    const stats = await indexAll(tempDir, false, db);
+    expect(stats.sessionsIndexed).toBe(2);
+    const child = db
+      .query<
+        {
+          parent_session_id: string | null;
+          relation_kind: string | null;
+          parent_file_path: string | null;
+        },
+        [string]
+      >(
+        "SELECT parent_session_id, relation_kind, parent_file_path FROM sessions WHERE file_path = ?",
+      )
+      .get(childFile);
+    expect(child).toEqual({
+      parent_session_id: parentId,
+      relation_kind: "subagent",
+      parent_file_path: parentFile,
+    });
+    const parent = db
+      .query<{ relation_kind: string | null; parent_file_path: string | null }, [string]>(
+        "SELECT relation_kind, parent_file_path FROM sessions WHERE file_path = ?",
+      )
+      .get(parentFile);
+    expect(parent?.relation_kind).toBeNull();
+    expect(parent?.parent_file_path).toBeNull();
+  });
+
+  test("stores a Pi parent pointer without guessing a fork or subagent kind", async () => {
+    const file = path.join(tempDir, "ordinary-child.jsonl");
+    fs.writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "child",
+          timestamp: "2026-01-01T00:00:00Z",
+          cwd: "/tmp/fart-project",
+          parentSession: "/sessions/parent.jsonl",
+        }),
+        piUser("user"),
+      ].join("\n"),
+    );
+    const db = getDb(dbPath);
+    await indexSession(file, "pi", "fart-project", db);
+    expect(
+      db
+        .query(
+          "SELECT parent_session_id, relation_kind, parent_file_path FROM sessions WHERE file_path = ?",
+        )
+        .get(file),
+    ).toEqual({
+      parent_session_id: "/sessions/parent.jsonl",
+      relation_kind: null,
+      parent_file_path: null,
+    });
   });
 
   test("indexes a single Claude session", async () => {
@@ -840,6 +928,15 @@ describe("indexer", () => {
     expect(
       db.query<{ count: number }, []>("SELECT COUNT(*) as count FROM messages").get()?.count,
     ).toBe(0);
+    expect(
+      db
+        .query<{ name: string }, []>("PRAGMA table_info(sessions)")
+        .all()
+        .some((column) => column.name === "agent_name"),
+    ).toBe(false);
+    expect(
+      db.query("SELECT name FROM sqlite_master WHERE name = 'subagent_launches'").get(),
+    ).toBeNull();
 
     // The next index run repopulates the previously dropped custom state.
     await indexSession(archiveCopy, "pi", "test-project", db);

@@ -205,6 +205,24 @@ function extractParentSessionIdFromPath(jsonlPath: string): string | undefined {
   return candidate !== undefined && UUID_PATTERN.test(candidate) ? candidate : undefined;
 }
 
+// What the archive path itself says about this transcript. The producer places
+// every agent transcript under <parent uuid>/subagents/ and the archiver copies
+// that layout verbatim, so a subagents path is producer evidence of the relation,
+// not a guess to be overridden by a record inside the file.
+interface ArchiveLayout {
+  /** True when the path contains a `subagents` directory segment. */
+  subagentPath: boolean;
+  /** Session UUID directly above `subagents`, when the segment is shaped like one. */
+  parentSessionId?: string;
+}
+
+function claudeArchiveLayout(jsonlPath: string): ArchiveLayout {
+  return {
+    subagentPath: /[\\/]subagents[\\/]/i.test(jsonlPath),
+    parentSessionId: extractParentSessionIdFromPath(jsonlPath),
+  };
+}
+
 function parseClaudeJsonLine(line: string): ClaudeRecord | undefined {
   try {
     const value = JSON.parse(line) as unknown;
@@ -220,6 +238,7 @@ function classifyClaudeRecord(
   record: ClaudeRecord,
   state: SessionState,
   lineContext: ParseLineContext,
+  archive: ArchiveLayout,
 ): "skip" | "process" {
   if (record.type === "summary" && record.summary) {
     setTitle(state, "summary", record.summary);
@@ -237,9 +256,15 @@ function classifyClaudeRecord(
     captureWorktree(state, record);
     return "skip";
   }
-  // Header of a forked subagent transcript; parentLastUuid and contextLength are
-  // unread. This link outranks the archive path, so an unusable one warns instead of
-  // falling back to a path guess that nothing downstream could tell apart.
+  // Header Claude Code writes into an agent transcript when the subagent's seed
+  // context is copied from the parent conversation (2.1.319 writes it only from
+  // the agent-spawn path, always carrying the agent's own agentId, and routes it
+  // to that agent's <parent-uuid>/subagents/ transcript; it is read back only to
+  // rehydrate the copied prefix when the agent resumes). It proves copied context
+  // inside a subagent transcript -- never that a standalone session forked -- so
+  // it refines the archive layout's link but cannot overturn its kind. The
+  // decision is applied where the result is finalized. parentLastUuid and
+  // contextLength are unread.
   if (record.type === "fork-context-ref") {
     const parent = record.parentSessionId;
     if (typeof parent !== "string" || parent === "") {
@@ -256,6 +281,13 @@ function classifyClaudeRecord(
       return "skip";
     }
     state.parentSessionId = parent;
+    if (!archive.subagentPath) {
+      lineContext.missingField(`fork-context-ref parent ${parent} ignored outside subagents/`);
+    } else if (archive.parentSessionId !== undefined && archive.parentSessionId !== parent) {
+      lineContext.missingField(
+        `fork-context-ref parent ${parent} conflicts with archive parent ${archive.parentSessionId}`,
+      );
+    }
     return "skip";
   }
   if (NON_MESSAGE_TYPES.has(record.type) || record.isMeta) {
@@ -465,6 +497,7 @@ export async function parseClaudeSession(
   jsonlPath: string,
   project: string,
 ): Promise<ParseOutcome> {
+  const archive = claudeArchiveLayout(jsonlPath);
   const lines = readJsonlLines(jsonlPath);
 
   const acc: ClaudeMessageAccumulator = {
@@ -496,7 +529,7 @@ export async function parseClaudeSession(
       continue;
     }
 
-    if (classifyClaudeRecord(record, state, lineContext) === "skip") {
+    if (classifyClaudeRecord(record, state, lineContext, archive) === "skip") {
       continue;
     }
 
@@ -526,9 +559,18 @@ export async function parseClaudeSession(
       model: state.model,
       createdAt: state.createdAt,
       updatedAt: state.updatedAt,
-      // The path is only an inference from the archive layout, so the record wins.
-      // A fork reuses its parent's sessionId, so id === parentSessionId is normal.
-      parentSessionId: state.parentSessionId ?? extractParentSessionIdFromPath(jsonlPath),
+      // A subagent transcript sits under <parent uuid>/subagents/ because the
+      // producer put it there and the archiver kept it, so the layout carries
+      // the relation: everything there is a subagent, fork-context-ref or not.
+      // The record's parentSessionId names the same session the layout does, so
+      // it refines the link and warns on disagreement, but it cannot turn the
+      // transcript into a fork. A standalone root keeps no link: fork-context-ref
+      // only evidences copied subagent context, not a fork operation. A subagent
+      // echoes its parent's sessionId, so id === parentSessionId is normal.
+      parentSessionId: archive.subagentPath
+        ? (state.parentSessionId ?? archive.parentSessionId)
+        : undefined,
+      relationKind: archive.subagentPath ? "subagent" : undefined,
       worktree: state.worktree,
     },
     messages,

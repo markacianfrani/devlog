@@ -355,35 +355,38 @@ const TOOLS = {
 
   schema: {
     description:
-      "Return the exact column names for all devlog tables. Call this before writing a query tool call to avoid column name errors.",
+      "Return the exact table and column names for the devlog database. Call this before writing a query tool call to avoid column name errors.",
     schema: v.object({}),
     handler() {
       const db = getDb(CONFIGURED_DB_PATH);
-      const tables = [
-        "sessions",
-        "messages",
-        "content_blocks",
-        "pr_links",
-        "artifact_links",
-        "messages_fts",
-        "message_usage",
-      ];
-      const lines: string[] = [];
-      for (const table of tables) {
+      // Derived from the database so new tables surface here without a second
+      // list to maintain. Internal bookkeeping (schema_version) and FTS5 shadow
+      // tables stay hidden.
+      const names = db
+        .query<{ name: string }, []>(
+          `SELECT name FROM sqlite_master
+           WHERE type IN ('table', 'view')
+             AND name NOT IN ('schema_version')
+             AND name NOT LIKE 'sqlite_%'
+             AND name NOT LIKE 'messages_fts_%'
+           ORDER BY name`,
+        )
+        .all();
+      const lines = names.map(({ name }) => {
         const cols = db
           .query<{ name: string; type: string }, [string]>(
             "SELECT name, type FROM pragma_table_info(?)",
           )
-          .all(table);
-        lines.push(`${table}: ${cols.map((c) => `${c.name} (${c.type})`).join(", ")}`);
-      }
+          .all(name);
+        return `${name}: ${cols.map((c) => `${c.name} (${c.type})`).join(", ")}`;
+      });
       return textResult(lines.join("\n"));
     },
   },
 
   query: {
     description:
-      "Execute a raw SQL SELECT query against the devlog database. The DB is read-only so only SELECT statements work. Tables: sessions, messages, content_blocks, messages_fts. Sum token usage over the message_usage view, which counts each API response once even when forks or subagents replay it across sessions.",
+      "Execute a raw SQL SELECT query against the devlog database. The DB is read-only so only SELECT statements work. Call `schema` first for exact table and column names. Sum token usage over the message_usage view, which counts each API response once even when forks or subagents replay it across sessions.",
     schema: v.object({
       sql: v.pipe(v.string(), v.description("SQL SELECT query to execute")),
     }),

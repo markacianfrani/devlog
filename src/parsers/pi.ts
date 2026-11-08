@@ -54,6 +54,9 @@ interface PiAgentMessage {
   command?: string;
   output?: string;
   exitCode?: number;
+  // Custom-role messages (pi.sendMessage()) carry customType and content at
+  // the message level; `display` is a rendering hint and is never read.
+  customType?: string;
 }
 
 interface PiMessageEntry {
@@ -374,7 +377,7 @@ function escapePiAttribute(value: string): string {
 }
 
 function buildSyntheticPiTextMessage(
-  entry: PiGenericEntry,
+  entry: { id?: string; parentId?: string | null; timestamp?: string },
   sessionId: string | undefined,
   tagName: string,
   body: string,
@@ -437,10 +440,27 @@ function parsePiCustomMessageContent(
 }
 
 /**
- * `custom_message` is pi's extension-owned message record. Its public contract
- * is a `customType` plus `content` that is either a string or an array of
- * text/image blocks. Devlog normalizes only that stable content surface; it
- * never inspects `customType` or the extension-owned `details` field.
+ * The stable envelope fields a custom message is normalized from: either a
+ * `custom_message` record (customType/content on the entry) or a `message`
+ * entry with role "custom" (customType/content inside `message`).
+ */
+interface CustomMessageSource {
+  id?: string;
+  parentId?: string | null;
+  timestamp?: string;
+  customType?: unknown;
+  content?: unknown;
+}
+
+/**
+ * `custom_message` is pi's extension-owned message record, and the same
+ * contract arrives as a `message` entry with role "custom" (pi.sendMessage()),
+ * which participates in LLM context as a user message. The public contract is
+ * a `customType` plus `content` that is either a string or an array of
+ * text/image blocks, but pi lets hosts augment the role, so any other JSON
+ * content is serialized verbatim (same policy as `custom` records) instead of
+ * being dropped. Devlog never inspects `customType` or the extension-owned
+ * `details` field.
  *
  * String content keeps the existing provenance wrapper. Array content is
  * parsed into real text/image blocks (so images keep their media type and text
@@ -449,15 +469,15 @@ function parsePiCustomMessageContent(
  * types warn through the normal content-block warning path.
  */
 function buildCustomMessage(
-  entry: PiGenericEntry,
+  source: CustomMessageSource,
   sessionId: string | undefined,
   lineContext: ParseLineContext,
 ): CleanMessage | undefined {
-  const customType = typeof entry.customType === "string" ? entry.customType : undefined;
-  const content = entry.content;
+  const customType = typeof source.customType === "string" ? source.customType : undefined;
+  const content = source.content;
 
   if (typeof content === "string") {
-    return buildSyntheticPiTextMessage(entry, sessionId, "custom-message", content, {
+    return buildSyntheticPiTextMessage(source, sessionId, "custom-message", content, {
       customType: customType ?? "unknown",
     });
   }
@@ -471,12 +491,24 @@ function buildCustomMessage(
       : `<pi:custom-message/>`;
     return createUserMessage(
       {
-        id: entry.id,
+        id: source.id,
         sessionId,
-        timestamp: entry.timestamp,
-        ...(entry.parentId && { parentId: entry.parentId }),
+        timestamp: source.timestamp,
+        ...(source.parentId && { parentId: source.parentId }),
       },
       [{ type: "text", text: marker }, ...blocks],
+    );
+  }
+
+  if (content !== undefined) {
+    // Augmented hosts can put arbitrary JSON on content; the payload is
+    // extension-owned, so it is serialized as-is rather than warned about.
+    return buildSyntheticPiTextMessage(
+      source,
+      sessionId,
+      "custom-message",
+      JSON.stringify(content),
+      { customType: customType ?? "unknown" },
     );
   }
 
@@ -589,10 +621,11 @@ function buildBashExecutionMessage(
 /**
  * Handles `message` records once the top-level dispatcher has confirmed the
  * type. bashExecution is a self-contained event (command + output) with no
- * content blocks, so it lives outside the user/assistant/toolResult union.
- * The system role is skipped (see SKIP_ROLES). Any other unrecognized role is
- * a real record we'd otherwise drop silently — warn so novel pi roles surface
- * instead of vanishing.
+ * content blocks, so it lives outside the user/assistant/toolResult union,
+ * and the custom role routes through the custom_message normalization (see
+ * buildCustomMessage). The system role is skipped (see SKIP_ROLES). Any other
+ * unrecognized role is a real record we'd otherwise drop silently — warn so
+ * novel pi roles surface instead of vanishing.
  */
 function buildPiMessageEntry(
   entry: PiMessageEntry,
@@ -601,6 +634,26 @@ function buildPiMessageEntry(
 ): PiEntryOutcome {
   if (entry.message?.role === "bashExecution") {
     return { malformed: false, message: buildBashExecutionMessage(entry, state.sessionId) };
+  }
+
+  if (entry.message?.role === "custom") {
+    updateStateFromEntry(state, entry, []);
+    return {
+      malformed: false,
+      message: buildCustomMessage(
+        {
+          id: entry.id,
+          parentId: entry.parentId,
+          timestamp: entry.timestamp,
+          customType: entry.message.customType,
+          content: entry.message.content,
+        },
+        state.sessionId,
+        lineContext,
+      ),
+      // Same context-edit-replaceable surface as custom_message records.
+      editKind: "user",
+    };
   }
 
   if (entry.message?.role && SKIP_ROLES.has(entry.message.role)) {

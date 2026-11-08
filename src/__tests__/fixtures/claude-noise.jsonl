@@ -29,6 +29,10 @@
 {"type":"marble-origami-commit","sessionId":"test-session-4","commit":"fart-fold-1"}
 {"type":"marble-origami-snapshot","sessionId":"test-session-4","snapshot":"fart-fold-snap"}
 {"type":"marble-origami-reset","sessionId":"test-session-4"}
+{"type":"api-request","sessionId":"test-session-4","id":"fart-req-1","timestamp":"2026-01-20T10:00:02.000Z","version":"2.1.319","querySource":"repl_main_thread","shapeHash":"fart00000000000000000000000000000000000000000000000000000000","params":{"model":"claude-fart-5","betas":["claude-code-20250219"],"max_tokens":64000,"thinking":{"type":"adaptive"},"output_config":{"effort":"medium"}},"keep":0,"tail":["fart00000000000000000000000000000000000000000000000000000000"],"cacheControl":[{"path":["system",0],"value":{"type":"ephemeral"}}],"requestDigest":"fart00000000000000000000000000000000000000000000000000000"}
+{"type":"api-request-blob","sessionId":"test-session-4","hash":"fart00000000000000000000000000000000000000000000000000000000","message":{"role":"user","content":[{"type":"text","text":"dedup blob copy of an already-transcribed fart"}]}}
+{"type":"api-request-shape","sessionId":"test-session-4","shapeHash":"fart00000000000000000000000000000000000000000000000000000000","timestamp":"2026-01-20T10:00:02.000Z","version":"2.1.319","shape":{"system":[{"type":"text","text":"You are the fart engineer."}]}}
+{"type":"tools-used","tools":["Bash","Fart"],"sessionId":"test-session-4"}
 {"type":"launched"}
 {"type":"started","key":"v2:fart0000000000000000000000000000000000000000000000000000000000","agentId":"agent-wf-fart-1","label":"resolve:fart-shape","phase":"Resolve"}
 {"type":"result","key":"v2:fart0000000000000000000000000000000000000000000000000000000000","agentId":"agent-wf-fart-1","result":"fart resolved"}

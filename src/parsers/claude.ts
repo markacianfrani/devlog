@@ -69,6 +69,20 @@ const NON_MESSAGE_TYPES = new Set([
   "marble-origami-commit",
   "marble-origami-snapshot",
   "marble-origami-reset",
+  // 2.1.319 request journal, written so a resumed session can rebuild the wire
+  // request without the server: one `api-request` per API call (the request
+  // envelope -- params model/betas/thinking/effort -- plus cache-construction
+  // state: base/keep/tail content hashes, cacheControl breakpoints, digests),
+  // content-addressed `api-request-blob` copies of already-transcribed messages
+  // the tails point at, and the `api-request-shape` system-prompt/tool shape
+  // they hash against. Model and usage still come from the assistant records;
+  // the blobs duplicate transcript content, so parsing them would double-count.
+  "api-request",
+  "api-request-blob",
+  "api-request-shape",
+  // Running tally of tool names used in the session, rewritten as tools
+  // accumulate. devlog derives tool usage from assistant messages.
+  "tools-used",
   // Workflow run journals (subagents/workflows/wf_*/journal.jsonl): the resume
   // cache the Workflow tool writes beside its agent transcripts — one `launched`
   // line, `started`/`result`/`failed` per agent() call keyed "v2:<sha256>", and

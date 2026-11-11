@@ -30,7 +30,7 @@ import {
 // they read -- a record omitting it falls through to here. This is the only set that
 // suppresses the "Unknown record type" warning. To refresh it after a CLI upgrade,
 // read the record-type retention table in the claude binary (grep for "atis-latch").
-const NON_MESSAGE_TYPES = new Set([
+export const NON_MESSAGE_TYPES = new Set([
   "progress",
   "file-history-snapshot",
   "file-history-delta",
@@ -69,14 +69,33 @@ const NON_MESSAGE_TYPES = new Set([
   "marble-origami-commit",
   "marble-origami-snapshot",
   "marble-origami-reset",
-  // 2.1.319 request journal, written so a resumed session can rebuild the wire
-  // request without the server: one `api-request` per API call (the request
-  // envelope -- params model/betas/thinking/effort -- plus cache-construction
-  // state: base/keep/tail content hashes, cacheControl breakpoints, digests),
-  // content-addressed `api-request-blob` copies of already-transcribed messages
-  // the tails point at, and the `api-request-shape` system-prompt/tool shape
-  // they hash against. Model and usage still come from the assistant records;
-  // the blobs duplicate transcript content, so parsing them would double-count.
+  // Refreshed against the 2.1.322 retention table (the `pBo` map). Its lookup
+  // special-cases "repl-mode" and defaults to "accumulate" for types the table does
+  // not list, so the table alone is not quite the full list of record types.
+  //
+  // Session state devlog has nowhere to put: "session-owner" (account and
+  // organization UUIDs), "dev-mods" (the dev-mods folder), "memory-mode"
+  // (memory-mode stamps), "repl-mode" (the code-mode switch) and
+  // "resume-head-vouch" (a checksum that makes a resume safe). "continued-in" is the
+  // one with a real claim on the schema: it names the session that carries this one
+  // on, so it is lineage like fork-context-ref but pointing at the child, and
+  // sessions has no column for a child link.
+  "session-owner",
+  "dev-mods",
+  "memory-mode",
+  "repl-mode",
+  "resume-head-vouch",
+  "continued-in",
+  // The request journal, present since 2.1.319, written so a resumed session can
+  // rebuild the wire request without the server: one `api-request` per API call
+  // (the request envelope -- params model/betas/thinking/effort -- plus
+  // cache-construction state: base/keep/tail content hashes, cacheControl
+  // breakpoints, digests), content-addressed `api-request-blob` copies of
+  // already-transcribed messages the tails point at, and the `api-request-shape`
+  // system-prompt/tool shape they hash against. Model and usage still come from
+  // the assistant records, and a blob's `message` is shaped exactly like a user
+  // record's, so naming these types is what keeps request bodies out of the
+  // archive as a second copy of the conversation.
   "api-request",
   "api-request-blob",
   "api-request-shape",

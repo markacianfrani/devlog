@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { parseClaudeSession } from "../parsers/claude.ts";
+import { NON_MESSAGE_TYPES, parseClaudeSession } from "../parsers/claude.ts";
 import { parseOpenCodeSession } from "../parsers/opencode.ts";
 import { parseContentBlock, ParseWarningCollector } from "../parsers/shared.ts";
 import type {
@@ -172,9 +173,9 @@ describe("Claude parser", () => {
     expect((at(asstMsg.content, 1) as TextContentBlock).text).toBe("Here is my response.");
   });
 
-  // One net for every type in NON_MESSAGE_TYPES: the fixture carries one record of
-  // each, so a CLI upgrade that adds a type fails here instead of only showing up as
-  // warning spew during a real index.
+  // The fixture carries one record of every type in NON_MESSAGE_TYPES, so a record
+  // type the parser does not know fails here instead of only showing up as warning
+  // spew during a real index.
   test("treats every known non-message record type as noise", async () => {
     const outcome = await parseClaudeSession(
       path.join(FIXTURES_DIR, "claude-noise.jsonl"),
@@ -185,6 +186,49 @@ describe("Claude parser", () => {
       .filter((w) => w.kind === "unknown-record-type")
       .map((w) => w.type);
     expect(unknownTypes).toEqual([]);
+  });
+
+  // The net above only fails when the fixture carries a type the parser does not
+  // know; it says nothing about a type in the set that the fixture never exercises.
+  // This is the other half, so the two stay in step.
+  test("the noise fixture carries a record of every non-message type", () => {
+    const fixtureTypes = new Set(
+      readFileSync(path.join(FIXTURES_DIR, "claude-noise.jsonl"), "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => (JSON.parse(line) as { type?: string }).type),
+    );
+
+    // The three exceptions are types whose record rewrites session state that other
+    // assertions here read: custom-title and ai-title would outrank the summary the
+    // title test reads, and worktree-state would hang a worktree off every other
+    // session-level assertion. Each is covered by its own fixture instead.
+    const coveredElsewhere = new Set(["custom-title", "ai-title", "worktree-state"]);
+    const missing = [...NON_MESSAGE_TYPES].filter(
+      (type) => !coveredElsewhere.has(type) && !fixtureTypes.has(type),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  test("never turns api-request payload records into conversation", async () => {
+    const outcome = await parseClaudeSession(
+      path.join(FIXTURES_DIR, "claude-noise.jsonl"),
+      "test-project",
+    );
+    const result = expectParsed(outcome);
+
+    // An api-request-blob carries a `message` shaped exactly like a user record's.
+    // Parsing it as one would archive the same conversation twice.
+    expect(result.messages).toHaveLength(2);
+    const texts = result.messages.flatMap((msg) =>
+      msg.content.flatMap((block) => (block.type === "text" ? [block.text] : [])),
+    );
+    expect(texts.some((text) => text.includes("Fart request body"))).toBe(false);
+
+    const unknownApi = outcome.warnings.filter(
+      (w) => w.kind === "unknown-record-type" && w.type?.startsWith("api-request") === true,
+    );
+    expect(unknownApi).toEqual([]);
   });
 
   test("skips bridge-session records without an unknown-type warning", async () => {

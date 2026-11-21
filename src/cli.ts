@@ -21,14 +21,21 @@ Options:
   --rebuild  Re-index all sessions during devlog or index, ignoring cache
   --verbose  Show per-project and per-session details
   --debug    Include noisy debug logs
+  --no-trufflehog
+             Drop trufflehog steps from redaction.steps for this run
   --version  Print the installed devlog version
   --help     Show this help message
 
 Config: ~/.config/devlog/config.json
-  excludeSources    Sources to skip (e.g. ["opencode"])
-  excludeProjects   Project slugs to skip (e.g. ["my-private-repo"])
-  archiveDir        Custom archive directory
-  dbPath            Custom database path`;
+  excludeSources     Sources to skip (e.g. ["opencode"])
+  excludeProjects    Project slugs to skip (e.g. ["my-private-repo"])
+  archiveDir         Custom archive directory
+  dbPath             Custom database path
+  redaction.steps    Optional steps after built-in redaction, in order:
+                     "redact" pipes the session JSON to a command's stdin
+                     and indexes its stdout; "trufflehog" (mode "warn" or
+                     "redact") scans with the trufflehog binary:
+                     https://github.com/trufflesecurity/trufflehog`;
 
 function readVersion(): string {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +61,7 @@ async function main() {
   const options: CliOptions = {
     verbose: args.includes("--verbose"),
     debug: args.includes("--debug"),
+    noTrufflehog: args.includes("--no-trufflehog"),
   };
 
   switch (command) {

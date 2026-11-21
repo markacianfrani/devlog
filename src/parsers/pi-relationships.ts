@@ -1,11 +1,12 @@
 import path from "node:path";
 
 import { piSubagents } from "./pi-subagents.ts";
+import type { RelationKind } from "./types.ts";
 
 export interface PiRelationshipAdapter {
   archiveEvidence(
     jsonlPath: string,
-  ): { parentSessionId: string; relationKind: "fork" | "subagent" } | undefined;
+  ): { parentSessionId: string; relationKind: RelationKind } | undefined;
   parentArchiveName?(jsonlPath: string): string | undefined;
 }
 
@@ -15,7 +16,7 @@ const ADAPTERS: readonly PiRelationshipAdapter[] = [piSubagents];
 export function resolvePiRelationship(
   headerParent: string | undefined,
   jsonlPath: string,
-): { parentSessionId?: string; relationKind?: "fork" | "subagent" } {
+): { parentSessionId?: string; relationKind?: RelationKind } {
   const evidence = ADAPTERS.flatMap((adapter) => adapter.archiveEvidence(jsonlPath) ?? []);
   const distinct = new Set(
     evidence.map((item) => `${item.relationKind}:${item.parentSessionId.toLowerCase()}`),

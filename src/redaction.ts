@@ -88,7 +88,7 @@ function looksLikeFilesystemPath(value: string): boolean {
   return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value);
 }
 
-function normalizeSecretLabel(name: string): string {
+export function normalizeSecretLabel(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -149,13 +149,28 @@ function redactText(text: string, literalSecrets: NormalizedLiteralSecrets): str
   return result;
 }
 
-function redactMeta(meta: SessionMeta, literalSecrets: NormalizedLiteralSecrets): SessionMeta {
-  if (!meta.title) {
-    return meta;
-  }
+// Only the free-text fields the DB binds are scrubbed. The identity fields
+// (id/source/project) and relationKind feed queries, joins, and CHECK
+// constraints — scrubbing those would corrupt the row instead of cleaning it,
+// so trufflehog redact mode checks its claim against the serialized result
+// instead of assuming these fields cover everything.
+const REDACTABLE_META_FIELDS = ["title", "cwd", "model", "parentSessionId"] as const;
 
-  const redactedTitle = redactText(meta.title, literalSecrets);
-  return redactedTitle === meta.title ? meta : { ...meta, title: redactedTitle };
+function redactMeta(meta: SessionMeta, literalSecrets: NormalizedLiteralSecrets): SessionMeta {
+  let redacted: SessionMeta | undefined;
+  for (const field of REDACTABLE_META_FIELDS) {
+    const value = meta[field];
+    if (!value) {
+      continue;
+    }
+    const scrubbed = redactText(value, literalSecrets);
+    if (scrubbed === value) {
+      continue;
+    }
+    redacted ??= { ...meta };
+    redacted[field] = scrubbed;
+  }
+  return redacted ?? meta;
 }
 
 function redactContentBlock(
@@ -172,20 +187,33 @@ function redactContentBlock(
       return redactedThinking === block.thinking ? block : { ...block, thinking: redactedThinking };
     }
     case "tool_use": {
-      if (!block.toolInput) {
+      const toolName = redactText(block.toolName, literalSecrets);
+      const toolInput = block.toolInput ? redactText(block.toolInput, literalSecrets) : undefined;
+      const toolUseId = block.toolUseId ? redactText(block.toolUseId, literalSecrets) : undefined;
+      if (
+        toolName === block.toolName &&
+        toolInput === block.toolInput &&
+        toolUseId === block.toolUseId
+      ) {
         return block;
       }
-      const redactedInput = redactText(block.toolInput, literalSecrets);
-      return redactedInput === block.toolInput ? block : { ...block, toolInput: redactedInput };
+      return { ...block, toolName, toolInput, toolUseId };
     }
     case "tool_result": {
-      const redactedOutput = redactText(block.toolOutput, literalSecrets);
-      return redactedOutput === block.toolOutput ? block : { ...block, toolOutput: redactedOutput };
+      const toolOutput = redactText(block.toolOutput, literalSecrets);
+      const toolUseId = block.toolUseId ? redactText(block.toolUseId, literalSecrets) : undefined;
+      if (toolOutput === block.toolOutput && toolUseId === block.toolUseId) {
+        return block;
+      }
+      return { ...block, toolOutput, toolUseId };
     }
     case "redacted_thinking":
-    case "image":
-    case "document":
       return block;
+    case "image":
+    case "document": {
+      const mediaType = block.mediaType ? redactText(block.mediaType, literalSecrets) : undefined;
+      return mediaType === block.mediaType ? block : { ...block, mediaType };
+    }
   }
 }
 
@@ -199,28 +227,53 @@ function redactUserContentBlock(
       return redactedText === block.text ? block : { ...block, text: redactedText };
     }
     case "tool_result": {
-      const redactedOutput = redactText(block.toolOutput, literalSecrets);
-      return redactedOutput === block.toolOutput ? block : { ...block, toolOutput: redactedOutput };
+      const toolOutput = redactText(block.toolOutput, literalSecrets);
+      const toolUseId = block.toolUseId ? redactText(block.toolUseId, literalSecrets) : undefined;
+      if (toolOutput === block.toolOutput && toolUseId === block.toolUseId) {
+        return block;
+      }
+      return { ...block, toolOutput, toolUseId };
     }
     case "image":
-    case "document":
-      return block;
+    case "document": {
+      const mediaType = block.mediaType ? redactText(block.mediaType, literalSecrets) : undefined;
+      return mediaType === block.mediaType ? block : { ...block, mediaType };
+    }
   }
+}
+
+// Message-level free text alongside content: model/agent names and the parent
+// pointer bind to the messages table too.
+function redactOptionalText(
+  value: string | undefined,
+  literalSecrets: NormalizedLiteralSecrets,
+): string | undefined {
+  return value ? redactText(value, literalSecrets) : value;
 }
 
 function redactMessage(
   message: CleanMessage,
   literalSecrets: NormalizedLiteralSecrets,
 ): CleanMessage {
+  const parentId = redactOptionalText(message.parentId, literalSecrets);
+  const model = redactOptionalText(message.model, literalSecrets);
+  const agentId = redactOptionalText(message.agentId, literalSecrets);
+
   if (message.role === "assistant") {
     return {
       ...message,
+      parentId,
+      model,
+      agentId,
       content: message.content.map((block) => redactContentBlock(block, literalSecrets)),
     };
   }
 
   return {
     ...message,
+    parentId,
+    model,
+    agentId,
     content: message.content.map((block) => redactUserContentBlock(block, literalSecrets)),
   };
 }
@@ -261,6 +314,25 @@ function redactArtifactLink(
 export function createIndexRedactionContext(env: Environment = process.env): IndexRedactionContext {
   return {
     literalSecrets: collectLiteralSecrets(env),
+  };
+}
+
+// Replace exact secret values anywhere they appear in a result. Used by
+// redaction steps (e.g. the trufflehog scan in "redact" mode) to scrub what
+// they found before the result reaches the index. Scrubs through the same
+// pass as built-in redaction, so SECRET_PATTERNS apply on top of the literals.
+export function redactLiterals(
+  result: ParseResult,
+  secrets: readonly LiteralSecret[],
+): ParseResult {
+  const literalSecrets = normalizeLiteralSecrets(secrets);
+
+  return {
+    ...result,
+    meta: redactMeta(result.meta, literalSecrets),
+    messages: result.messages.map((message) => redactMessage(message, literalSecrets)),
+    prLinks: result.prLinks.map((link) => redactPrLink(link, literalSecrets)),
+    artifactLinks: result.artifactLinks.map((link) => redactArtifactLink(link, literalSecrets)),
   };
 }
 

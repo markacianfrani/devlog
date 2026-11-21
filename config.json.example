@@ -1,4 +1,14 @@
 {
   "archiveDir": "/Users/yourname/.config/devlog",
-  "excludeProjects": ["-Users-yourname-Code-project1", "-Users-yourname-Code-project2"]
+  "excludeProjects": ["-Users-yourname-Code-project1", "-Users-yourname-Code-project2"],
+  "redaction": {
+    "steps": [
+      {
+        "kind": "redact",
+        "name": "my-custom-redaction",
+        "command": "bun /Users/yourname/.config/devlog/hooks/my-redaction.ts"
+      },
+      { "kind": "trufflehog", "mode": "warn" }
+    ]
+  }
 }

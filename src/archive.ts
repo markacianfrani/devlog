@@ -76,8 +76,13 @@ export async function indexMain(
   }
 
   const db = getDb(dbPath);
+  // --no-trufflehog drops just the scan; redact steps always run.
+  const redactionSteps = options.noTrufflehog
+    ? config.redactionSteps.filter((step) => step.kind !== "trufflehog")
+    : config.redactionSteps;
   const stats = await indexAll(ARCHIVE_DIR, rebuild, db, {
     excludeSources: config.excludeSources,
+    redactionSteps,
     callbacks: {
       onStart(total) {
         progress.start("index", total);

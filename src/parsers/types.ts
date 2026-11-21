@@ -122,13 +122,19 @@ export interface WorktreeInfo {
   originalHeadCommit?: string;
 }
 
+// The one place the fork/subagent set is spelled out; the SessionMeta
+// unions, the pi relationship adapters, and db.ts's row types derive from it
+// (db.ts's CHECK constraint mirrors it in SQL).
+export const RELATION_KINDS = ["fork", "subagent"] as const;
+export type RelationKind = (typeof RELATION_KINDS)[number];
+
 type ParentRelationship =
   | { parentSessionId?: undefined; relationKind?: never }
   | {
       /** Raw producer pointer, often an ID or a path containing it; never inferred. */
       parentSessionId: string;
       /** Only producer evidence classifies the relationship. */
-      relationKind?: "fork" | "subagent";
+      relationKind?: RelationKind;
     };
 
 export type SessionMeta = {
@@ -168,7 +174,8 @@ export type ParseWarningKind =
   | "missing-field"
   | "unknown-content-block-type"
   | "unknown-record-type"
-  | "unknown-message-role";
+  | "unknown-message-role"
+  | "post-redaction";
 
 export interface ParseWarning {
   kind: ParseWarningKind;
@@ -218,7 +225,7 @@ export interface SessionMetaDraft {
   createdAt?: string;
   updatedAt?: string;
   parentSessionId?: string;
-  relationKind?: "fork" | "subagent";
+  relationKind?: RelationKind;
   worktree?: WorktreeInfo;
 }
 

@@ -28,9 +28,10 @@ Each stage skips sessions that haven't changed since the last run. Use `archive`
 ### Options
 
 ```
---verbose    show per-project and per-session details
---debug      extra noisy diagnostics
---rebuild    with devlog or index, wipe the database and re-index everything
+--verbose        show per-project and per-session details
+--debug          extra noisy diagnostics
+--rebuild        with devlog or index, wipe the database and re-index everything
+--no-trufflehog  drop trufflehog redaction steps for one run
 ```
 
 ## MCP server
@@ -61,12 +62,27 @@ SELECT project, COUNT(*) as n FROM sessions GROUP BY project ORDER BY n DESC
 
 ### Where redaction applies
 
-Redaction runs **only** on content written to the SQLite index, which is the surface your coding agent queries through the MCP server. Archived JSONL files in `~/devlog/` are **copied byte-for-byte** from the source session files — they are never rewritten or scrubbed. This is deliberate:
+Redaction runs **only** on content written to the SQLite index — the surface your coding agent queries through the MCP server. Archived JSONL files in `~/devlog/` are copied byte-for-byte and never rewritten: the archive stays a faithful backup of what the agent actually saw, and scrubbing the index is what keeps secrets out of search results and MCP responses. If you need the archive itself clean, scrub it out-of-band, then `devlog index --rebuild`. The scrubber is a safety net against casually surfacing secrets, not a full PII sanitizer.
 
-- The archive is meant to be a faithful backup of what the agent actually saw. Rewriting it would make it impossible to diff against the source or recover the original context.
-- The index is the queryable surface. Scrubbing there is where it prevents secrets from leaking into search results or MCP responses.
+### Redaction steps
 
-If you need the archive itself to be clean, scrub it out-of-band (e.g., wipe a session file, then `devlog index --rebuild`). The scrubber is intentionally narrow: it helps avoid casually surfacing secrets, but it is **not** a full PII/privacy sanitizer.
+`redaction.steps` runs after the built-in redaction, in order:
+
+```json
+{
+  "redaction": {
+    "steps": [
+      { "kind": "redact", "name": "mine", "command": "bun ~/.config/devlog/hooks/redact.ts" },
+      { "kind": "trufflehog", "mode": "redact" }
+    ]
+  }
+}
+```
+
+- `redact` — devlog pipes the redacted session JSON to the command's stdin and indexes what it writes to stdout; any stdin/stdout program works. Each hook sees the previous step's output, plus `DEVLOG_SESSION_FILE`, `DEVLOG_SOURCE`, and `DEVLOG_PROJECT` in its environment. A hook that fails or times out (default 30s, `timeoutMs`) is a warning — the previous result stands.
+- `trufflehog` — scans for secrets the built-in patterns miss. `warn` prints masked findings; `redact` additionally scrubs them from the indexed content as `[REDACTED:<detector>]`. The scrub covers the content and metadata fields the index stores; a finding the scrub can't reach (one inside a session id, say) is reported without the "redacted" claim, so a warning never overstates what was scrubbed. Neither mode drops a session. The scan runs a `trufflehog` binary you install yourself (`brew install trufflehog`) and verification calls provider APIs with whatever it finds — devlog never bundles it.
+
+Order matters: a `redact` step before a `trufflehog` step suppresses what the scan would flag. Steps run only for sessions being indexed; to apply one retroactively, `devlog index --rebuild`. `--no-trufflehog` drops trufflehog steps for one run.
 
 ### Session sources
 
@@ -104,11 +120,12 @@ Rebuild the index from the archive at any time with `devlog index --rebuild`.
 }
 ```
 
-| Key               | Default                          | What it does                                                                                   |
-| ----------------- | -------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `archiveDir`      | `~/.config/devlog`               | Where raw JSONL session copies are written.                                                    |
-| `dbPath`          | `~/.local/state/devlog/index.db` | Where the SQLite index lives. Both `devlog index` and `devlog mcp` read this key.              |
-| `excludeProjects` | `[]`                             | Fuzzy, case-insensitive substring matches against project slugs/paths. Full slug not required. |
+| Key               | Default                          | What it does                                                                                                                   |
+| ----------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `archiveDir`      | `~/.config/devlog`               | Where raw JSONL session copies are written.                                                                                    |
+| `dbPath`          | `~/.local/state/devlog/index.db` | Where the SQLite index lives. Both `devlog index` and `devlog mcp` read this key.                                              |
+| `excludeProjects` | `[]`                             | Fuzzy, case-insensitive substring matches against project slugs/paths. Full slug not required.                                 |
+| `redaction.steps` | `[]`                             | Post-redaction pipeline: `redact` steps (custom transforms) and `trufflehog` steps (secret scan). See "Redaction steps" above. |
 
 `excludeProjects` examples:
 

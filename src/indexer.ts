@@ -2,15 +2,21 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { Source } from "./config.ts";
+import { CONFIG_PATH, type Source } from "./config.ts";
 import { piParentArchiveName } from "./parsers/pi-relationships.ts";
 import { isSource, type ParseResult, type ParseWarning } from "./parsers/types.ts";
+import {
+  applyRedactionSteps,
+  type RedactionStep,
+  type RedactionSessionInfo,
+} from "./redaction-steps.ts";
 import {
   createIndexRedactionContext,
   redactForIndexing,
   type IndexRedactionContext,
 } from "./redaction.ts";
 import { SOURCE_ADAPTERS } from "./sources/registry.ts";
+import { checkTruffleHogAvailability } from "./trufflehog.ts";
 
 export interface IndexFailure {
   filePath: string;
@@ -24,6 +30,10 @@ export interface IndexStats {
   errors: number;
   warnings: number;
   failures: IndexFailure[];
+  // Sessions actually scanned this run, and findings across them. Zero
+  // scanned means the scan was off, unavailable, or failed.
+  trufflehogScanned: number;
+  trufflehogFindings: number;
 }
 
 export interface IndexProgressEvent {
@@ -44,7 +54,16 @@ export interface IndexProgressCallbacks {
 
 export interface IndexAllOptions {
   excludeSources?: readonly Source[];
+  // Configured redaction steps (see redaction-steps.ts), already filtered by
+  // the CLI (e.g. --no-trufflehog).
+  redactionSteps?: readonly RedactionStep[];
   callbacks?: IndexProgressCallbacks;
+}
+
+export interface IndexSessionOptions {
+  redactionContext?: IndexRedactionContext;
+  onWarning?: (warning: ParseWarning) => void;
+  redactionSteps?: readonly RedactionStep[];
 }
 
 function getMtime(filePath: string): number {
@@ -253,19 +272,28 @@ function insertArtifactLinks(db: Database, result: ParseResult, filePath: string
   }
 }
 
+export interface IndexSessionResult {
+  indexed: boolean;
+  messageCount: number;
+  // Reported from every return path, including skips, so the run summary
+  // counts every scan that actually ran.
+  trufflehogScanned: boolean;
+  trufflehogFindings: number;
+}
+
 export async function indexSession(
   jsonlPath: string,
   source: Source,
   project: string,
   db: Database,
-  redactionContext?: IndexRedactionContext,
-  onWarning?: (warning: ParseWarning) => void,
-): Promise<{ indexed: boolean; messageCount: number }> {
+  options: IndexSessionOptions = {},
+): Promise<IndexSessionResult> {
+  const { redactionContext, onWarning, redactionSteps } = options;
   const mtime = getMtime(jsonlPath);
   const existing = checkSession(db, jsonlPath, mtime);
 
   if (existing.sameVersion) {
-    return { indexed: false, messageCount: 0 };
+    return { indexed: false, messageCount: 0, trufflehogScanned: false, trufflehogFindings: 0 };
   }
 
   const outcome = await SOURCE_ADAPTERS[source].parse(jsonlPath, project);
@@ -276,13 +304,54 @@ export async function indexSession(
 
   let result = outcome.result;
   if (!result) {
-    return { indexed: false, messageCount: 0 };
+    return { indexed: false, messageCount: 0, trufflehogScanned: false, trufflehogFindings: 0 };
   }
 
   result = redactForIndexing(result, redactionContext);
 
   if (result.messages.length === 0) {
-    return { indexed: false, messageCount: 0 };
+    return { indexed: false, messageCount: 0, trufflehogScanned: false, trufflehogFindings: 0 };
+  }
+
+  let trufflehogScanned = false;
+  let trufflehogFindings = 0;
+
+  if (redactionSteps && redactionSteps.length > 0) {
+    const session: RedactionSessionInfo = { filePath: jsonlPath, source, project };
+    const warn = (message: string) =>
+      onWarning?.({
+        kind: "post-redaction",
+        parserName: "redaction",
+        message,
+        filePath: jsonlPath,
+      });
+    const outcome = await applyRedactionSteps(result, redactionSteps, session, warn);
+    result = outcome.result;
+    trufflehogScanned = outcome.trufflehogScanned;
+    trufflehogFindings = outcome.trufflehogFindings;
+    if (result.messages.length === 0) {
+      // An emptying hook must not be a silent skip: without this warning the
+      // session just disappears from the index with only a skipped-count bump.
+      warn(
+        existing.exists
+          ? "redaction steps left no messages; skipping session and dropping its previously indexed rows"
+          : "redaction steps left no messages; skipping session",
+      );
+      if (existing.exists) {
+        // Drop the previously indexed rows too: keeping them would keep the
+        // pre-redaction content serving through MCP, and with no recorded
+        // mtime the next run re-skips forever.
+        db.exec("BEGIN TRANSACTION");
+        try {
+          deleteSession(db, jsonlPath);
+          db.exec("COMMIT");
+        } catch (err) {
+          db.exec("ROLLBACK");
+          throw err;
+        }
+      }
+      return { indexed: false, messageCount: 0, trufflehogScanned, trufflehogFindings };
+    }
   }
 
   db.exec("BEGIN TRANSACTION");
@@ -301,7 +370,12 @@ export async function indexSession(
     throw err;
   }
 
-  return { indexed: true, messageCount: result.messages.length };
+  return {
+    indexed: true,
+    messageCount: result.messages.length,
+    trufflehogScanned,
+    trufflehogFindings,
+  };
 }
 
 function findJsonlFiles(dir: string): string[] {
@@ -465,6 +539,95 @@ function unresolveCycles(proposed: Map<string, string | null>): void {
   }
 }
 
+// Resolve the redaction steps to run once per index run. The trufflehog
+// availability probe runs here so a missing binary is one warning instead of
+// one per session: trufflehog steps are dropped, redact steps stand.
+function resolveRedactionSteps(
+  options: IndexAllOptions,
+  onWarning: (warning: ParseWarning) => void,
+): readonly RedactionStep[] {
+  const steps = options.redactionSteps ?? [];
+  if (!steps.some((step) => step.kind === "trufflehog")) {
+    return steps;
+  }
+
+  const availability = checkTruffleHogAvailability();
+  if (availability.available) {
+    return steps;
+  }
+
+  onWarning({
+    kind: "post-redaction",
+    parserName: "trufflehog",
+    message: availability.missing
+      ? "trufflehog scan is enabled but the trufflehog binary was not found on PATH; skipping it. Install: https://github.com/trufflesecurity/trufflehog"
+      : `trufflehog scan is enabled but the trufflehog binary could not run (${availability.problem}); skipping it`,
+    filePath: CONFIG_PATH,
+  });
+  return steps.filter((step) => step.kind !== "trufflehog");
+}
+
+interface IndexOneFileOptions {
+  redactionContext: IndexRedactionContext;
+  onWarning: (warning: ParseWarning) => void;
+  redactionSteps?: readonly RedactionStep[];
+  stats: IndexStats;
+  callbacks?: IndexProgressCallbacks;
+}
+
+// Index one archive file, recording the outcome on `stats`. A single bad
+// session is a recorded failure, never a failed run.
+async function indexOneFile(
+  filePath: string,
+  info: { project: string; source: Source },
+  db: Database,
+  options: IndexOneFileOptions,
+): Promise<void> {
+  const { redactionContext, onWarning, redactionSteps, stats, callbacks } = options;
+
+  try {
+    const result = await indexSession(filePath, info.source, info.project, db, {
+      redactionContext,
+      onWarning,
+      redactionSteps,
+    });
+
+    // Skipped sessions still report their scans: the run summary counts
+    // every scan that ran, not just the ones that indexed.
+    if (result.trufflehogScanned) {
+      stats.trufflehogScanned++;
+      stats.trufflehogFindings += result.trufflehogFindings;
+    }
+
+    if (!result.indexed) {
+      stats.sessionsSkipped++;
+      return;
+    }
+
+    stats.sessionsIndexed++;
+    stats.messagesIndexed += result.messageCount;
+    callbacks?.onIndexed?.({
+      filePath,
+      source: info.source,
+      project: info.project,
+      messageCount: result.messageCount,
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    if (!callbacks?.onError) {
+      console.error(`Error indexing ${filePath}:`, errorMsg);
+    }
+    stats.errors++;
+    stats.failures.push({ filePath, error: errorMsg });
+    callbacks?.onError?.({
+      filePath,
+      source: info.source,
+      project: info.project,
+      error: errorMsg,
+    });
+  }
+}
+
 export async function indexAll(
   archiveDir: string,
   rebuild: boolean,
@@ -480,6 +643,8 @@ export async function indexAll(
     errors: 0,
     warnings: 0,
     failures: [],
+    trufflehogScanned: 0,
+    trufflehogFindings: 0,
   };
 
   if (rebuild) {
@@ -491,6 +656,13 @@ export async function indexAll(
   callbacks?.onStart?.(jsonlFiles.length);
 
   const redactionContext = createIndexRedactionContext();
+
+  const onWarning = (warning: ParseWarning) => {
+    stats.warnings++;
+    callbacks?.onWarning?.(warning);
+  };
+  const redactionSteps = resolveRedactionSteps(options, onWarning);
+
   let processed = 0;
 
   for (const filePath of jsonlFiles) {
@@ -499,44 +671,13 @@ export async function indexAll(
       continue;
     }
 
-    try {
-      const result = await indexSession(
-        filePath,
-        info.source,
-        info.project,
-        db,
-        redactionContext,
-        (warning) => {
-          stats.warnings++;
-          callbacks?.onWarning?.(warning);
-        },
-      );
-      if (result.indexed) {
-        stats.sessionsIndexed++;
-        stats.messagesIndexed += result.messageCount;
-        callbacks?.onIndexed?.({
-          filePath,
-          source: info.source,
-          project: info.project,
-          messageCount: result.messageCount,
-        });
-      } else {
-        stats.sessionsSkipped++;
-      }
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      if (!callbacks?.onError) {
-        console.error(`Error indexing ${filePath}:`, errorMsg);
-      }
-      stats.errors++;
-      stats.failures.push({ filePath, error: errorMsg });
-      callbacks?.onError?.({
-        filePath,
-        source: info.source,
-        project: info.project,
-        error: errorMsg,
-      });
-    }
+    await indexOneFile(filePath, info, db, {
+      redactionContext,
+      onWarning,
+      redactionSteps,
+      stats,
+      callbacks,
+    });
 
     processed++;
     callbacks?.onTick?.(processed, stats);

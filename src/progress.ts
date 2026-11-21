@@ -8,6 +8,7 @@ import type { ParseWarning } from "./parsers/types.ts";
 export interface CliOptions {
   verbose: boolean;
   debug: boolean;
+  noTrufflehog?: boolean;
 }
 
 export interface SourceSummary {
@@ -292,6 +293,23 @@ export function printRunArchiveRows(summaries: SourceSummary[]) {
   }
 }
 
+// An enabled scan says how many sessions it cleared: a silent clean run is
+// indistinguishable from a run that never scanned, which matters for a tool
+// whose whole job is "did anything leak".
+function formatTruffleHogScanSummary(stats: {
+  trufflehogScanned?: number;
+  trufflehogFindings?: number;
+}): string | undefined {
+  const scanned = stats.trufflehogScanned ?? 0;
+  if (scanned === 0) {
+    return undefined;
+  }
+
+  const findings = stats.trufflehogFindings ?? 0;
+  const result = findings === 0 ? "no findings" : `${findings} finding${findings === 1 ? "" : "s"}`;
+  return `TruffleHog: ${scanned} scanned, ${result}`;
+}
+
 export function printRunIndexResult(
   stats: {
     sessionsIndexed: number;
@@ -299,6 +317,8 @@ export function printRunIndexResult(
     messagesIndexed: number;
     errors: number;
     warnings?: number;
+    trufflehogScanned?: number;
+    trufflehogFindings?: number;
   },
   durationMs: number,
 ) {
@@ -311,6 +331,10 @@ export function printRunIndexResult(
   console.log(
     `  ${stats.messagesIndexed} ${stats.messagesIndexed === 1 ? "message" : "messages"} indexed`,
   );
+  const trufflehogLine = formatTruffleHogScanSummary(stats);
+  if (trufflehogLine) {
+    console.log(`  ${trufflehogLine}`);
+  }
   if ((stats.warnings ?? 0) > 0) {
     console.log(`  Warnings: ${stats.warnings}`);
   }
@@ -361,6 +385,8 @@ export function printIndexSummary(
     messagesIndexed: number;
     errors: number;
     warnings?: number;
+    trufflehogScanned?: number;
+    trufflehogFindings?: number;
   },
   dbPath: string,
   durationMs: number,
@@ -370,6 +396,10 @@ export function printIndexSummary(
     console.log(`Sessions indexed: ${stats.sessionsIndexed}`);
     console.log(`Sessions skipped: ${stats.sessionsSkipped}`);
     console.log(`Messages indexed: ${stats.messagesIndexed}`);
+    const trufflehogLine = formatTruffleHogScanSummary(stats);
+    if (trufflehogLine) {
+      console.log(trufflehogLine);
+    }
     if ((stats.warnings ?? 0) > 0) {
       console.log(`Warnings: ${stats.warnings}`);
     }
@@ -384,6 +414,10 @@ export function printIndexSummary(
     `\n  ${dim(`Done in ${formatDuration(durationMs)}`)}  ${dim("·")}  ${stats.messagesIndexed} messages indexed`,
   );
   console.log(`  ${dim(`Database: ${dbPath}`)}`);
+  const trufflehogLine = formatTruffleHogScanSummary(stats);
+  if (trufflehogLine) {
+    console.log(`  ${dim(trufflehogLine)}`);
+  }
   if ((stats.warnings ?? 0) > 0) {
     console.log(`  ${bold("Warnings")} ${stats.warnings}`);
   }

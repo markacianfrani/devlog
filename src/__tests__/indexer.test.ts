@@ -490,7 +490,9 @@ describe("indexer", () => {
 
     // oxlint-disable-next-line typescript/await-thenable -- Bun's async matcher isn't typed as Thenable, but the await is required so the rejection is asserted before the query below.
     await expect(
-      indexSession(tempFile, "claude", "test-project", db, failingContext),
+      indexSession(tempFile, "claude", "test-project", db, {
+        redactionContext: failingContext,
+      }),
     ).rejects.toThrow("redaction unavailable");
 
     const session = db
@@ -694,7 +696,9 @@ describe("indexer", () => {
       .digest("hex");
 
     const warnings: ParseWarning[] = [];
-    await indexSession(fixturePath, "pi", "test-project", db, undefined, (w) => warnings.push(w));
+    await indexSession(fixturePath, "pi", "test-project", db, {
+      onWarning: (w) => warnings.push(w),
+    });
 
     // Raw archive content is never mutated by indexing.
     const afterChecksum = crypto
